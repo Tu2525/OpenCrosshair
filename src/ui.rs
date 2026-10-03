@@ -1,5 +1,5 @@
 use crate::config::{
-    self, Aim, AimButton, Crosshair, Game, MAX_GRID, MAX_IMAGE, MAX_SCALE, Mode, Settings,
+    self, Aim, AimButton, Crosshair, Game, MAX_GRID, MAX_IMAGE, MAX_SCALE, Mode, Settings, Theme,
 };
 use crate::overlay::{self, KEY_OK, Status, VISIBLE};
 use crate::{apps, install, picture, render, update};
@@ -9,40 +9,112 @@ use eframe::egui::{
 };
 use egui_phosphor::bold as icon;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-// Warm monochrome; colour only where it means something.
-const BG: Color32 = Color32::from_rgb(18, 18, 17);
-const SIDE: Color32 = Color32::from_rgb(23, 23, 22);
-const FIELD: Color32 = Color32::from_rgb(34, 34, 32);
-const HOVER: Color32 = Color32::from_rgb(44, 44, 42);
-const BORDER: Color32 = Color32::from_rgb(42, 42, 40);
-const TEXT: Color32 = Color32::from_rgb(232, 230, 225);
-const MUTED: Color32 = Color32::from_rgb(132, 130, 125);
-const ACCENT: Color32 = Color32::from_rgb(150, 205, 160); // muted pale green
-const GREEN: (Color32, Color32) = (
-    Color32::from_rgb(30, 46, 34),
-    Color32::from_rgb(150, 205, 160),
-);
-const YELLOW: (Color32, Color32) = (
-    Color32::from_rgb(52, 44, 24),
-    Color32::from_rgb(222, 190, 110),
-);
-const BLUE: (Color32, Color32) = (
-    Color32::from_rgb(26, 40, 54),
-    Color32::from_rgb(130, 180, 225),
-);
+/// Warm monochrome; colour only where it means something. A pair is (background, text).
+struct Palette {
+    bg: Color32,
+    side: Color32,  // sidebar
+    field: Color32, // buttons and inputs at rest
+    hover: Color32,
+    control: Color32, // checkbox boxes and slider rails
+    edge: Color32,    // outline of checkboxes, 3:1 against the page so you can see them
+    popup: Color32,
+    border: Color32,
+    text: Color32,
+    muted: Color32,
+    accent: Color32,
+    selection: f32, // how strongly the accent tints selected things
+    danger: Color32,
+    green: (Color32, Color32),
+    yellow: (Color32, Color32),
+    blue: (Color32, Color32),
+    gray: (Color32, Color32),
+}
+
+const DARK: Palette = Palette {
+    bg: Color32::from_rgb(18, 18, 17),
+    side: Color32::from_rgb(23, 23, 22),
+    field: Color32::from_rgb(34, 34, 32),
+    hover: Color32::from_rgb(44, 44, 42),
+    control: Color32::from_rgb(46, 46, 43),
+    edge: Color32::from_rgb(112, 110, 105),
+    popup: Color32::from_rgb(23, 23, 22),
+    border: Color32::from_rgb(42, 42, 40),
+    text: Color32::from_rgb(232, 230, 225),
+    muted: Color32::from_rgb(146, 144, 139),
+    accent: Color32::from_rgb(150, 205, 160),
+    selection: 0.35,
+    danger: Color32::from_rgb(230, 120, 110),
+    green: (
+        Color32::from_rgb(30, 46, 34),
+        Color32::from_rgb(150, 205, 160),
+    ),
+    yellow: (
+        Color32::from_rgb(52, 44, 24),
+        Color32::from_rgb(222, 190, 110),
+    ),
+    blue: (
+        Color32::from_rgb(26, 40, 54),
+        Color32::from_rgb(130, 180, 225),
+    ),
+    gray: (
+        Color32::from_rgb(38, 38, 36),
+        Color32::from_rgb(150, 148, 142),
+    ),
+};
+
+const LIGHT: Palette = Palette {
+    bg: Color32::from_rgb(252, 251, 249),
+    side: Color32::from_rgb(244, 243, 239),
+    field: Color32::from_rgb(238, 237, 233),
+    hover: Color32::from_rgb(227, 226, 221),
+    control: Color32::from_rgb(226, 224, 219),
+    edge: Color32::from_rgb(128, 126, 120),
+    popup: Color32::from_rgb(255, 255, 255),
+    border: Color32::from_rgb(224, 222, 216),
+    text: Color32::from_rgb(34, 36, 38),
+    muted: Color32::from_rgb(104, 102, 98),
+    accent: Color32::from_rgb(38, 112, 72),
+    selection: 0.5,
+    danger: Color32::from_rgb(178, 58, 46),
+    green: (
+        Color32::from_rgb(226, 240, 229),
+        Color32::from_rgb(36, 104, 60),
+    ),
+    yellow: (
+        Color32::from_rgb(251, 243, 219),
+        Color32::from_rgb(149, 100, 0),
+    ),
+    blue: (
+        Color32::from_rgb(225, 243, 254),
+        Color32::from_rgb(31, 108, 159),
+    ),
+    gray: (
+        Color32::from_rgb(234, 233, 229),
+        Color32::from_rgb(92, 90, 86),
+    ),
+};
+
+static LIGHT_NOW: AtomicBool = AtomicBool::new(false);
+
+/// The colours for whichever theme is showing. Set once per frame from egui's own theme, which
+/// follows Windows unless you've picked one in Settings.
+fn pal() -> &'static Palette {
+    if LIGHT_NOW.load(Ordering::Relaxed) {
+        &LIGHT
+    } else {
+        &DARK
+    }
+}
+
 // Layout: page column width, and the preview column that appears beside it on wide windows.
 const COLUMN: f32 = 640.0;
-const SIDE_PREVIEW: f32 = 400.0;
+const PREVIEW_COLUMN: f32 = 400.0;
 const GUTTER: f32 = 32.0;
 const SCROLL_GAP: f32 = 24.0;
-const GRAY: (Color32, Color32) = (
-    Color32::from_rgb(38, 38, 36),
-    Color32::from_rgb(150, 148, 142),
-);
 
 pub fn run(
     shared: Arc<Mutex<Settings>>,
@@ -69,6 +141,7 @@ pub fn run(
         options,
         Box::new(|cc| {
             style(&cc.egui_ctx);
+            cc.egui_ctx.set_theme(theme_preference(local.theme));
             overlay::adopt_settings_window();
             Ok(Box::new(App {
                 shared,
@@ -96,35 +169,50 @@ pub fn run(
     )
 }
 
+fn theme_preference(t: Theme) -> egui::ThemePreference {
+    match t {
+        Theme::System => egui::ThemePreference::System,
+        Theme::Dark => egui::ThemePreference::Dark,
+        Theme::Light => egui::ThemePreference::Light,
+    }
+}
+
+fn visuals(base: egui::Visuals, p: &Palette) -> egui::Visuals {
+    let mut v = base;
+    v.panel_fill = p.bg;
+    v.window_fill = p.popup;
+    v.window_stroke = Stroke::new(1.0, p.border);
+    v.extreme_bg_color = p.field;
+    v.override_text_color = Some(p.text);
+    v.selection.bg_fill = p.accent.gamma_multiply(p.selection);
+    v.selection.stroke = Stroke::new(1.0, p.accent);
+    v.slider_trailing_fill = true;
+    for (w, fill) in [
+        (&mut v.widgets.inactive, p.field),
+        (&mut v.widgets.hovered, p.hover),
+        (&mut v.widgets.active, p.hover),
+        (&mut v.widgets.open, p.hover),
+    ] {
+        w.corner_radius = CornerRadius::same(6);
+        // Buttons use the weak fill; checkbox boxes and slider rails use the other one, which
+        // needs to be clearly different from the page behind them.
+        w.weak_bg_fill = fill;
+        w.bg_fill = if fill == p.field { p.control } else { p.hover };
+        w.bg_stroke = Stroke::NONE;
+    }
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.border);
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
+    v
+}
+
 fn style(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Bold);
     ctx.set_fonts(fonts);
 
-    let mut v = egui::Visuals::dark();
-    v.panel_fill = BG;
-    v.window_fill = SIDE;
-    v.window_stroke = Stroke::new(1.0, BORDER);
-    v.extreme_bg_color = FIELD;
-    v.override_text_color = Some(TEXT);
-    v.selection.bg_fill = ACCENT.gamma_multiply(0.35);
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
-    v.slider_trailing_fill = true;
-    for (w, fill) in [
-        (&mut v.widgets.inactive, FIELD),
-        (&mut v.widgets.hovered, HOVER),
-        (&mut v.widgets.active, HOVER),
-        (&mut v.widgets.open, HOVER),
-    ] {
-        w.corner_radius = CornerRadius::same(6);
-        w.bg_fill = fill;
-        w.weak_bg_fill = fill;
-        w.bg_stroke = Stroke::NONE;
-    }
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, BORDER);
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
-    ctx.set_visuals(v);
-    ctx.global_style_mut(|s| {
+    ctx.set_visuals_of(egui::Theme::Dark, visuals(egui::Visuals::dark(), &DARK));
+    ctx.set_visuals_of(egui::Theme::Light, visuals(egui::Visuals::light(), &LIGHT));
+    ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = vec2(10.0, 9.0);
         s.spacing.button_padding = vec2(12.0, 6.0);
         s.spacing.slider_width = 260.0;
@@ -138,7 +226,7 @@ fn style(ctx: &egui::Context) {
     });
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 enum Page {
     Crosshair,
     Games,
@@ -177,6 +265,9 @@ struct App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Colours follow egui's theme, which is Windows' own light/dark setting unless you've
+        // picked one in Settings.
+        LIGHT_NOW.store(ui.ctx().theme() == egui::Theme::Light, Ordering::Relaxed);
         // eframe shows the window after its first frame no matter what, but it applies viewport
         // commands right after that, so hiding it here means it never reaches the screen.
         if std::mem::take(&mut self.start_hidden) {
@@ -212,8 +303,8 @@ impl eframe::App for App {
             .show_separator_line(false)
             .frame(
                 egui::Frame::new()
-                    .fill(SIDE)
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .fill(pal().side)
+                    .stroke(Stroke::new(1.0, pal().border))
                     .inner_margin(18),
             )
             .show(ui, |ui| self.nav(ui));
@@ -224,15 +315,18 @@ impl eframe::App for App {
             bottom: 0,
         };
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BG).inner_margin(margin))
+            .frame(egui::Frame::new().fill(pal().bg).inner_margin(margin))
             .show(ui, |ui| {
                 let full = ui.available_width();
                 // On a wide window the Crosshair page gets the preview in its own column, so it
                 // stays in view while you scroll through the controls.
                 let side = self.page == Page::Crosshair
-                    && full >= COLUMN + SCROLL_GAP + GUTTER + SIDE_PREVIEW + 48.0;
+                    && full >= COLUMN + SCROLL_GAP + GUTTER + PREVIEW_COLUMN + 48.0;
+                // Otherwise the heading and a smaller preview stay put at the top, and only the
+                // controls below them scroll, so you can watch the crosshair while you drag.
+                let sticky = self.page == Page::Crosshair && !side;
                 let column = (full - SCROLL_GAP).min(COLUMN);
-                let group = column + SCROLL_GAP + if side { GUTTER + SIDE_PREVIEW } else { 0.0 };
+                let group = column + SCROLL_GAP + if side { GUTTER + PREVIEW_COLUMN } else { 0.0 };
                 // Centre the content in whatever room the window gives it.
                 let indent = ((full - group) / 2.0).floor().max(0.0);
                 ui.horizontal_top(|ui| {
@@ -242,7 +336,19 @@ impl eframe::App for App {
                         vec2(column + SCROLL_GAP, height),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
+                            if sticky {
+                                egui::Frame::new()
+                                    .inner_margin(egui::Margin {
+                                        right: SCROLL_GAP as i8,
+                                        ..Default::default()
+                                    })
+                                    .show(ui, |ui| {
+                                        ui.set_width(column);
+                                        self.crosshair_header(ui, true);
+                                    });
+                            }
                             egui::ScrollArea::vertical()
+                                .id_salt(self.page) // each page keeps its own scroll position
                                 .auto_shrink(false)
                                 .show(ui, |ui| {
                                     // Keep clear of the scrollbar and leave room at the bottom.
@@ -255,7 +361,12 @@ impl eframe::App for App {
                                     egui::Frame::new().inner_margin(pad).show(ui, |ui| {
                                         ui.set_width(column);
                                         match self.page {
-                                            Page::Crosshair => self.crosshair_page(ui, !side),
+                                            Page::Crosshair => {
+                                                if !sticky {
+                                                    self.crosshair_header(ui, false);
+                                                }
+                                                self.crosshair_body(ui);
+                                            }
                                             Page::Games => self.games_page(ui),
                                             Page::Presets => self.presets_page(ui),
                                             Page::Settings => self.settings_page(ui),
@@ -268,7 +379,7 @@ impl eframe::App for App {
                         ui.add_space(GUTTER);
                         ui.vertical(|ui| {
                             ui.add_space(78.0); // line up with the first card, below the heading
-                            let size = vec2(SIDE_PREVIEW, SIDE_PREVIEW * 1.3);
+                            let size = vec2(PREVIEW_COLUMN, PREVIEW_COLUMN * 1.3);
                             self.preview(ui, size, true);
                         });
                     }
@@ -279,6 +390,10 @@ impl eframe::App for App {
             *self.shared.lock().unwrap() = self.local.clone();
             overlay::refresh();
             self.dirty = true;
+        }
+        if self.local.theme != before.theme {
+            ui.ctx().set_theme(theme_preference(self.local.theme));
+            ui.ctx().request_repaint(); // redraw in the new colours straight away
         }
         // Save once the user lets go, not on every slider tick / painted cell.
         if self.dirty && !ui.ctx().input(|i| i.pointer.any_down()) {
@@ -293,7 +408,7 @@ impl eframe::App for App {
 /// Flat card: hairline border, no fill change, small uppercase caption.
 fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let r = egui::Frame::new()
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0, pal().border))
         .corner_radius(10)
         .inner_margin(20)
         .show(ui, |ui| {
@@ -303,7 +418,7 @@ fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R)
                     RichText::new(title.to_uppercase())
                         .small()
                         .strong()
-                        .color(MUTED)
+                        .color(pal().muted)
                         .extra_letter_spacing(1.0),
                 );
                 ui.add_space(4.0);
@@ -316,7 +431,7 @@ fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R)
 }
 
 fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
-    ui.label(RichText::new(label).color(MUTED));
+    ui.label(RichText::new(label).color(pal().muted));
     add(ui);
     ui.end_row();
 }
@@ -329,20 +444,39 @@ fn slider(ui: &mut egui::Ui, label: &str, v: &mut u32, range: std::ops::RangeInc
 
 fn heading(ui: &mut egui::Ui, title: &str, sub: &str) {
     ui.label(RichText::new(title).heading().strong());
-    ui.label(RichText::new(sub).color(MUTED));
+    ui.label(RichText::new(sub).color(pal().muted));
     ui.add_space(18.0);
+}
+
+/// A checkbox whose box you can actually see against the page.
+fn check(
+    ui: &mut egui::Ui,
+    value: &mut bool,
+    label: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.scope(|ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active] {
+            state.corner_radius = CornerRadius::same(4); // a box, not a bubble
+        }
+        w.inactive.bg_stroke = Stroke::new(1.5, pal().edge);
+        w.hovered.bg_stroke = Stroke::new(1.5, pal().text);
+        w.active.bg_stroke = Stroke::new(1.5, pal().text);
+        ui.checkbox(value, label)
+    })
+    .inner
 }
 
 /// Solid light button with dark text: the one primary action on a card.
 fn primary(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Response {
     ui.add_enabled(
         enabled,
-        egui::Button::new(RichText::new(text).color(BG).strong()).fill(TEXT),
+        egui::Button::new(RichText::new(text).color(pal().bg).strong()).fill(pal().text),
     )
 }
 
 fn ghost(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new(text).color(MUTED)).fill(Color32::TRANSPARENT))
+    ui.add(egui::Button::new(RichText::new(text).color(pal().muted)).fill(Color32::TRANSPARENT))
 }
 
 /// Small uppercase pill.
@@ -365,9 +499,9 @@ fn badge(ui: &mut egui::Ui, text: &str, (bg, fg): (Color32, Color32)) {
 /// Keyboard key rendered as a keycap.
 fn keycap(ui: &mut egui::Ui, text: &str, active: bool) -> egui::Response {
     let (fill, stroke) = if active {
-        (ACCENT.gamma_multiply(0.18), ACCENT)
+        (pal().accent.gamma_multiply(0.18), pal().accent)
     } else {
-        (FIELD, BORDER)
+        (pal().field, pal().border)
     };
     ui.add(
         egui::Button::new(RichText::new(text).monospace().strong())
@@ -461,7 +595,7 @@ fn thumb(ui: &mut egui::Ui, t: &Tex, size: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 6, Color32::from_rgb(10, 10, 10));
-    p.rect_stroke(rect, 6, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+    p.rect_stroke(rect, 6, Stroke::new(1.0, pal().border), StrokeKind::Inside);
     draw_fit(&p, t, rect.center(), size - 10.0);
 }
 
@@ -507,7 +641,7 @@ fn app_icon(ui: &mut egui::Ui, info: &AppInfo, size: f32) {
         None => {
             let glyph = RichText::new(icon::GAME_CONTROLLER)
                 .size(size * 0.8)
-                .color(MUTED);
+                .color(pal().muted);
             ui.add_sized([size, size], egui::Label::new(glyph));
         }
     }
@@ -518,7 +652,11 @@ fn app_icon(ui: &mut egui::Ui, info: &AppInfo, size: f32) {
 impl App {
     fn nav(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(icon::CROSSHAIR).size(22.0).color(ACCENT));
+            ui.label(
+                RichText::new(icon::CROSSHAIR)
+                    .size(22.0)
+                    .color(pal().accent),
+            );
             ui.label(RichText::new("OpenCrosshair").size(18.0).strong());
         });
         ui.add_space(22.0);
@@ -531,9 +669,13 @@ impl App {
             let on = self.page == p;
             let text = RichText::new(format!("{ic}    {name}"))
                 .size(15.0)
-                .color(if on { TEXT } else { MUTED });
+                .color(if on { pal().text } else { pal().muted });
             let btn = egui::Button::new(text)
-                .fill(if on { FIELD } else { Color32::TRANSPARENT })
+                .fill(if on {
+                    pal().field
+                } else {
+                    Color32::TRANSPARENT
+                })
                 .min_size(vec2(ui.available_width(), 38.0));
             if ui.add(btn).clicked() {
                 self.page = p;
@@ -550,17 +692,17 @@ impl App {
                 name.unwrap_or_else(|| apps::display_name(exe, "", ""))
             };
             let (badge_text, tone, detail) = match overlay::STATUS.lock().unwrap().clone() {
-                Status::InGame(exe) => ("In game", GREEN, game_name(&exe)),
+                Status::InGame(exe) => ("In game", pal().green, game_name(&exe)),
                 Status::Fullscreen(exe) => (
                     "Fullscreen",
-                    YELLOW,
+                    pal().yellow,
                     format!("{}: if you can't see it, use borderless", game_name(&exe)),
                 ),
-                Status::Waiting => ("Waiting", YELLOW, "No game in focus".to_string()),
-                Status::Hidden => ("Hidden", GRAY, format!("{toggle} shows it again")),
-                Status::Everywhere => ("Everywhere", BLUE, "On top of all apps".to_string()),
+                Status::Waiting => ("Waiting", pal().yellow, "No game in focus".to_string()),
+                Status::Hidden => ("Hidden", pal().gray, format!("{toggle} shows it again")),
+                Status::Everywhere => ("Everywhere", pal().blue, "On top of all apps".to_string()),
             };
-            ui.label(RichText::new(detail).small().color(MUTED));
+            ui.label(RichText::new(detail).small().color(pal().muted));
             badge(ui, badge_text, tone);
             ui.add_space(6.0);
 
@@ -569,16 +711,16 @@ impl App {
                 egui::Button::new(
                     RichText::new(format!("{}   Overlay on", icon::POWER))
                         .strong()
-                        .color(BG),
+                        .color(pal().bg),
                 )
-                .fill(TEXT)
+                .fill(pal().text)
             } else {
                 egui::Button::new(
                     RichText::new(format!("{}   Overlay off", icon::POWER))
                         .strong()
-                        .color(MUTED),
+                        .color(pal().muted),
                 )
-                .fill(FIELD)
+                .fill(pal().field)
             };
             let hint = format!("Toggle: {toggle}");
             if ui
@@ -592,16 +734,19 @@ impl App {
         });
     }
 
-    fn crosshair_page(&mut self, ui: &mut egui::Ui, inline_preview: bool) {
+    /// The Crosshair page's heading, and the preview when it isn't in its own column.
+    fn crosshair_header(&mut self, ui: &mut egui::Ui, with_preview: bool) {
         heading(
             ui,
             "Crosshair",
             "Changes show on the overlay as you make them.",
         );
-        if inline_preview {
-            self.preview(ui, vec2(ui.available_width(), 210.0), false);
+        if with_preview {
+            self.preview(ui, vec2(ui.available_width(), 150.0), false);
         }
+    }
 
+    fn crosshair_body(&mut self, ui: &mut egui::Ui) {
         let c = &mut self.local.crosshair;
         ui.horizontal(|ui| {
             for (m, ic, name) in [
@@ -612,10 +757,10 @@ impl App {
                 let on = c.mode == m;
                 let btn = egui::Button::new(
                     RichText::new(format!("{ic}  {name}"))
-                        .color(if on { BG } else { MUTED })
+                        .color(if on { pal().bg } else { pal().muted })
                         .strong(),
                 )
-                .fill(if on { TEXT } else { FIELD })
+                .fill(if on { pal().text } else { pal().field })
                 .min_size(vec2(130.0, 34.0));
                 if ui.add(btn).clicked() {
                     c.mode = m;
@@ -633,7 +778,7 @@ impl App {
         let c = &mut self.local.crosshair;
         card(ui, "Position", |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Offset").color(MUTED));
+                ui.label(RichText::new("Offset").color(pal().muted));
                 ui.add(egui::DragValue::new(&mut c.offset_x).prefix("x  "));
                 ui.add(egui::DragValue::new(&mut c.offset_y).prefix("y  "));
                 if ghost(ui, &format!("{}  Reset", icon::ARROW_COUNTER_CLOCKWISE)).clicked() {
@@ -674,7 +819,7 @@ impl App {
         };
         p.rect_filled(dark, dark_round, Color32::from_rgb(8, 8, 8));
         p.rect_filled(light, light_round, Color32::from_rgb(196, 192, 184));
-        p.rect_stroke(rect, 10, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+        p.rect_stroke(rect, 10, Stroke::new(1.0, pal().border), StrokeKind::Inside);
         let fit = dark.width().min(dark.height()) - 40.0;
         let mut zoom = 1.0;
         for half in [dark, light] {
@@ -703,18 +848,18 @@ impl App {
                 } else {
                     "Imported".to_string()
                 };
-                ui.label(RichText::new(current).color(MUTED));
+                ui.label(RichText::new(current).color(pal().muted));
             });
             ui.label(
                 RichText::new("Or drop a picture onto this window. PNG with a transparent background works best.")
                     .small()
-                    .color(MUTED),
+                    .color(pal().muted),
             );
             if let Some(e) = &self.image_error {
                 ui.label(
                     RichText::new(format!("{}  {e}", icon::WARNING))
                         .small()
-                        .color(YELLOW.1),
+                        .color(pal().yellow.1),
                 );
             }
             ui.add_space(4.0);
@@ -815,7 +960,7 @@ impl App {
                     icon::EYEDROPPER
                 ))
                 .small()
-                .color(MUTED),
+                .color(pal().muted),
             );
             ui.add_space(8.0);
 
@@ -876,7 +1021,7 @@ impl App {
                     p.rect_stroke(
                         cell_rect(x, y),
                         0.0,
-                        Stroke::new(1.0, ACCENT),
+                        Stroke::new(1.0, pal().accent),
                         StrokeKind::Inside,
                     );
                 }
@@ -962,15 +1107,16 @@ impl App {
 
         card(ui, "", |ui| {
             ui.horizontal(|ui| {
-                ui.checkbox(
+                check(
+                    ui,
                     &mut s.only_games,
                     RichText::new("Only show in my games").strong(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if s.only_games {
-                        badge(ui, "Games only", GREEN)
+                        badge(ui, "Games only", pal().green)
                     } else {
-                        badge(ui, "Everywhere", BLUE)
+                        badge(ui, "Everywhere", pal().blue)
                     }
                 });
             });
@@ -979,7 +1125,7 @@ impl App {
             } else {
                 "The crosshair currently draws on top of everything."
             };
-            ui.label(RichText::new(hint).small().color(MUTED));
+            ui.label(RichText::new(hint).small().color(pal().muted));
         });
 
         card(ui, "While aiming", |ui| {
@@ -1021,7 +1167,8 @@ impl App {
                             });
                     });
                     row(ui, "", |ui| {
-                        ui.checkbox(
+                        check(
+                            ui,
                             &mut s.aim_toggle,
                             "Toggle: press once to aim, again to stop",
                         );
@@ -1032,13 +1179,13 @@ impl App {
                     "For games where you aim down sights. It reads the button's state, with no input hooks.",
                 )
                 .small()
-                .color(MUTED),
+                .color(pal().muted),
             );
         });
 
         card(ui, "My games", |ui| {
             if s.games.is_empty() {
-                ui.label(RichText::new("No games yet. Add one below.").color(MUTED));
+                ui.label(RichText::new("No games yet. Add one below.").color(pal().muted));
             }
             let mut remove = None;
             egui::Grid::new("games")
@@ -1085,7 +1232,7 @@ impl App {
                                     ui.selectable_value(&mut g.preset, name.clone(), name);
                                 }
                             });
-                        ui.toggle_value(&mut g.windowed, "Windowed").on_hover_text(
+                        check(ui, &mut g.windowed, "Windowed").on_hover_text(
                             "Only for games you play in a window: centres the crosshair on the \
                              game's window instead of the middle of the screen.",
                         );
@@ -1119,7 +1266,7 @@ impl App {
                         icon::WARNING
                     ))
                     .small()
-                    .color(YELLOW.1),
+                    .color(pal().yellow.1),
                 );
                 if info.fso == apps::Fso::OffForEveryone {
                     ui.label(
@@ -1128,7 +1275,7 @@ impl App {
                              in the game's Properties > Compatibility tab (needs admin), or play borderless.",
                         )
                         .small()
-                        .color(MUTED),
+                        .color(pal().muted),
                     );
                 } else if ghost(ui, &format!("{}  Turn them back on", icon::WRENCH)).clicked()
                     && apps::enable_fullscreen_optimizations(&g.path)
@@ -1207,7 +1354,7 @@ impl App {
             ui.label(
                 RichText::new("Start the game first, then hit Refresh to see it in the list.")
                     .small()
-                    .color(MUTED),
+                    .color(pal().muted),
             );
         });
     }
@@ -1256,7 +1403,7 @@ impl App {
         let mut delete = None;
         card(ui, "Saved", |ui| {
             if self.local.presets.is_empty() {
-                ui.label(RichText::new("Nothing saved yet.").color(MUTED));
+                ui.label(RichText::new("Nothing saved yet.").color(pal().muted));
             }
             egui::Grid::new("presets")
                 .num_columns(4)
@@ -1273,12 +1420,13 @@ impl App {
                                 Mode::Pixels => format!("Pixel {0}×{0}", c.grid),
                                 Mode::Image => "Image".to_string(),
                             };
-                            ui.label(RichText::new(kind).small().color(MUTED));
+                            ui.label(RichText::new(kind).small().color(pal().muted));
                         });
                         if self.local.crosshair == *c {
                             // A pill would stretch to this tall row, so plain text instead.
                             ui.label(
-                                RichText::new(format!("{}  In use", icon::CHECK)).color(GREEN.1),
+                                RichText::new(format!("{}  In use", icon::CHECK))
+                                    .color(pal().green.1),
                             );
                         } else if primary(ui, true, "Load").clicked() {
                             load = Some(name.clone());
@@ -1289,11 +1437,7 @@ impl App {
                         } else {
                             icon::TRASH.to_string()
                         };
-                        let colour = if armed {
-                            Color32::from_rgb(230, 120, 110)
-                        } else {
-                            MUTED
-                        };
+                        let colour = if armed { pal().danger } else { pal().muted };
                         let btn = egui::Button::new(RichText::new(text).color(colour))
                             .fill(Color32::TRANSPARENT);
                         let hover = if armed {
@@ -1329,7 +1473,7 @@ impl App {
     }
 
     fn settings_page(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Settings", "Hotkeys, startup and updates.");
+        heading(ui, "Settings", "Appearance, hotkeys, startup and updates.");
         if let Some(i) = self.listening {
             ui.ctx().request_repaint(); // keep polling while waiting for a key
             if let Some(hk) = overlay::capture_key() {
@@ -1339,6 +1483,32 @@ impl App {
                 self.listening = None;
             }
         }
+        card(ui, "Appearance", |ui| {
+            ui.horizontal(|ui| {
+                for (t, ic, name) in [
+                    (Theme::System, icon::MONITOR, "System"),
+                    (Theme::Light, icon::SUN, "Light"),
+                    (Theme::Dark, icon::MOON, "Dark"),
+                ] {
+                    let on = self.local.theme == t;
+                    let btn = egui::Button::new(
+                        RichText::new(format!("{ic}  {name}"))
+                            .color(if on { pal().bg } else { pal().muted })
+                            .strong(),
+                    )
+                    .fill(if on { pal().text } else { pal().field })
+                    .min_size(vec2(110.0, 34.0));
+                    if ui.add(btn).clicked() {
+                        self.local.theme = t;
+                    }
+                }
+            });
+            ui.label(
+                RichText::new("System follows Windows' light or dark app mode.")
+                    .small()
+                    .color(pal().muted),
+            );
+        });
         card(ui, "Keybinds", |ui| {
             egui::Grid::new("keys")
                 .num_columns(4)
@@ -1373,7 +1543,7 @@ impl App {
                             ui.label(
                                 RichText::new(format!("{}  {why}", icon::WARNING))
                                     .small()
-                                    .color(YELLOW.1),
+                                    .color(pal().yellow.1),
                             );
                         }
                         ui.end_row();
@@ -1385,26 +1555,26 @@ impl App {
                     icon::KEYBOARD
                 ))
                 .small()
-                .color(MUTED),
+                .color(pal().muted),
             );
         });
         card(ui, "Startup", |ui| {
             ui.horizontal(|ui| {
-                if ui
-                    .checkbox(
-                        &mut self.autostart,
-                        RichText::new("Start with Windows").strong(),
-                    )
-                    .changed()
+                if check(
+                    ui,
+                    &mut self.autostart,
+                    RichText::new("Start with Windows").strong(),
+                )
+                .changed()
                 {
                     install::set_autostart(self.autostart);
                     self.autostart = install::autostart(); // show what actually got written
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if self.autostart {
-                        badge(ui, "On", GREEN)
+                        badge(ui, "On", pal().green)
                     } else {
-                        badge(ui, "Off", GRAY)
+                        badge(ui, "Off", pal().gray)
                     }
                 });
             });
@@ -1415,12 +1585,13 @@ impl App {
                     icon::ROCKET_LAUNCH
                 ))
                 .small()
-                .color(MUTED),
+                .color(pal().muted),
             );
         });
         card(ui, "Updates", |ui| {
             ui.horizontal(|ui| {
-                ui.checkbox(
+                check(
+                    ui,
                     &mut self.local.auto_update,
                     RichText::new("Install updates automatically").strong(),
                 );
@@ -1428,7 +1599,7 @@ impl App {
                     ui.label(
                         RichText::new(format!("v{}", update::VERSION))
                             .monospace()
-                            .color(MUTED),
+                            .color(pal().muted),
                     );
                 });
             });
@@ -1451,12 +1622,12 @@ impl App {
                 if ui.add_enabled(!busy, check).clicked() {
                     let _ = self.updates.send(());
                 }
-                ui.label(RichText::new(text).small().color(MUTED));
+                ui.label(RichText::new(text).small().color(pal().muted));
             });
             ui.label(
                 RichText::new("Updates come from the project's GitHub releases. It never restarts while you're in a game.")
                     .small()
-                    .color(MUTED),
+                    .color(pal().muted),
             );
         });
     }
@@ -1465,10 +1636,10 @@ impl App {
 fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
     card(ui, "Colour", |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Fill").color(MUTED));
+            ui.label(RichText::new("Fill").color(pal().muted));
             ui.color_edit_button_srgba_unmultiplied(&mut c.color);
             ui.add_space(20.0);
-            ui.label(RichText::new("Outline").color(MUTED));
+            ui.label(RichText::new("Outline").color(pal().muted));
             ui.color_edit_button_srgba_unmultiplied(&mut c.outline_color);
         });
     });
@@ -1482,7 +1653,7 @@ fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
                 slider(ui, "Gap", &mut c.gap, 0..=50);
                 slider(ui, "Outline", &mut c.outline, 0..=5);
                 row(ui, "", |ui| {
-                    ui.checkbox(&mut c.t_style, "T-style (no top line)");
+                    check(ui, &mut c.t_style, "T-style (no top line)");
                 });
             });
     });
@@ -1492,13 +1663,13 @@ fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
             .spacing([20.0, 10.0])
             .show(ui, |ui| {
                 row(ui, "", |ui| {
-                    ui.checkbox(&mut c.dot, "Centre dot");
+                    check(ui, &mut c.dot, "Centre dot");
                 });
                 row(ui, "Dot size", |ui| {
                     ui.add_enabled(c.dot, Slider::new(&mut c.dot_size, 1..=20));
                 });
                 row(ui, "", |ui| {
-                    ui.checkbox(&mut c.circle, "Circle");
+                    check(ui, &mut c.circle, "Circle");
                 });
                 row(ui, "Radius", |ui| {
                     ui.add_enabled(c.circle, Slider::new(&mut c.circle_radius, 1..=100));

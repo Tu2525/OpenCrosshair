@@ -14,6 +14,15 @@ pub enum Mode {
     Image,
 }
 
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub enum Theme {
+    /// Follow Windows' light or dark app mode.
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
 /// What happens to the crosshair while you aim down sights.
 #[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum Aim {
@@ -183,6 +192,7 @@ pub struct Settings {
     pub aim: Aim,
     pub aim_button: AimButton,
     pub aim_toggle: bool, // press once to aim, again to stop (games with toggle ADS)
+    pub theme: Theme,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -208,6 +218,7 @@ impl Default for Settings {
             aim: Aim::Keep,
             aim_button: AimButton::Right,
             aim_toggle: false,
+            theme: Theme::System,
         }
     }
 }

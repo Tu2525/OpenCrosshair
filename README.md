@@ -20,6 +20,7 @@ before using any overlay in competitive play.
   button, for games with aim down sights.
 - **Games only mode**: the crosshair shows while one of your games is focused and hides everywhere else.
   Games are listed by their real name and icon, read from the game's own exe.
+- **Light and dark themes**. It follows Windows' app mode, or you can pick one in Settings.
 - **Lives in the tray**, out of your way and out of Alt+Tab. Click the icon for the settings.
 - **Rebindable global hotkeys**: F8 toggles the crosshair, F9 opens the settings.
 - **Start with Windows**, straight to the tray.
@@ -32,6 +33,12 @@ before using any overlay in competitive play.
 | Image | Games | Presets | Settings |
 | --- | --- | --- | --- |
 | ![Image page](docs/image.png) | ![Games page](docs/games.png) | ![Presets page](docs/presets.png) | ![Settings page](docs/settings.png) |
+
+The same pages in the light theme:
+
+| Crosshair | Games |
+| --- | --- |
+| ![Crosshair page, light theme](docs/light-crosshair.png) | ![Games page, light theme](docs/light-games.png) |
 
 ## How it compares
 

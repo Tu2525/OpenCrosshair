@@ -52,12 +52,25 @@ struct Asset {
     size: u64,
 }
 
-/// Remove what the last update left behind.
+/// Remove what the last update left behind. Right after an update the old process can still be
+/// shutting down and holding its exe for a moment, so keep trying for a few seconds.
 pub fn cleanup() {
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = std::fs::remove_file(exe.with_extension("exe.old"));
-        let _ = std::fs::remove_file(exe.with_extension("exe.new"));
-    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let gone = |p: PathBuf| match std::fs::remove_file(p) {
+            Ok(()) => true,
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        };
+        for _ in 0..20 {
+            // `&` rather than `&&`: always try both.
+            if gone(exe.with_extension("exe.old")) & gone(exe.with_extension("exe.new")) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    });
 }
 
 /// Starts the background checker. Sending on the returned channel checks right away

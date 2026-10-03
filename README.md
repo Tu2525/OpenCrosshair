@@ -18,7 +18,8 @@ overlay in competitive play.
 - **Rebindable global hotkeys**: F8 toggles the crosshair, F9 opens the settings.
 - **Start with Windows**, hidden until you press the hotkey.
 - **Automatic updates** from GitHub releases. It waits until you've left your game before restarting.
-- Centres on the game window you're focused on, so windowed games and second monitors just work.
+- Stays in the middle of the screen. If a game runs on your second monitor it follows the game there,
+  and games you play in a window can be set to centre on that window instead.
 
 ![Pixel canvas, with the live preview beside it on a wide window](docs/canvas.png)
 
@@ -53,8 +54,8 @@ The overlay is a layered window (`WS_EX_LAYERED | WS_EX_TRANSPARENT`) drawn with
 It's redrawn only when the crosshair actually changes, so while you play it uses no measurable CPU.
 
 Focus changes come from an out-of-context `SetWinEventHook`, so there's no polling and nothing is loaded
-into other processes. When the focused app is one of your games, the crosshair is centred on that window's
-client area.
+into other processes. When the focused app is one of your games, the crosshair moves to the middle of
+the monitor that game is on, or to the middle of the game's window for games marked as windowed.
 
 The settings window uses [egui](https://github.com/emilk/egui). The app icon is drawn from code in
 `build.rs` at compile time, so there's no icon file to keep in sync.

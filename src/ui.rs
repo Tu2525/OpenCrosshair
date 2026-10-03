@@ -798,7 +798,7 @@ impl App {
             }
             let mut remove = None;
             egui::Grid::new("games")
-                .num_columns(4)
+                .num_columns(5)
                 .spacing([14.0, 10.0])
                 .show(ui, |ui| {
                     for (i, g) in s.games.iter_mut().enumerate() {
@@ -827,6 +827,10 @@ impl App {
                                     ui.selectable_value(&mut g.preset, name.clone(), name);
                                 }
                             });
+                        ui.toggle_value(&mut g.windowed, "Windowed").on_hover_text(
+                            "Only for games you play in a window: centres the crosshair on the \
+                             game's window instead of the middle of the screen.",
+                        );
                         if ghost(ui, icon::X).on_hover_text("Remove").clicked() {
                             remove = Some(i);
                         }
@@ -843,7 +847,7 @@ impl App {
             if !exe.is_empty() && !games.iter().any(|g| g.exe == exe) {
                 games.push(Game {
                     exe,
-                    preset: String::new(),
+                    ..Default::default()
                 });
             }
         };

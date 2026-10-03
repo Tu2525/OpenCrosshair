@@ -168,7 +168,7 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
     let exe = unsafe { exe_of(fg) };
     let ours = exe == st.own_exe;
     let visible = VISIBLE.load(Ordering::Relaxed);
-    let (c, keys, show, in_game) = {
+    let (c, keys, show, in_game, windowed) = {
         let s = settings.lock().unwrap();
         let game = s.games.iter().find(|g| g.exe == exe).filter(|_| !ours);
         // While our own window is focused, preview the crosshair being edited.
@@ -183,7 +183,14 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             None if s.only_games => Status::Waiting,
             None => Status::Everywhere,
         };
-        (c, [s.toggle_key, s.menu_key], show, game.is_some())
+        let windowed = game.is_some_and(|g| g.windowed);
+        (
+            c,
+            [s.toggle_key, s.menu_key],
+            show,
+            game.is_some(),
+            windowed,
+        )
     };
     IN_GAME.store(in_game, Ordering::Relaxed);
 
@@ -207,7 +214,7 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
     }
 
     unsafe {
-        let centre = target(fg, in_game);
+        let centre = target(fg, in_game, windowed);
         if st.drawn.as_ref() != Some(&c) {
             let img = render::render(&c);
             st.size = (img.w as i32, img.h as i32);
@@ -215,7 +222,7 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             draw(hwnd, &img, st.at);
             st.drawn = Some(c);
         } else if top_left(centre, st.size, &c) != st.at {
-            // Same image, different spot (focus moved to another monitor): just move the window.
+            // Same image, different spot (a game on another monitor): just move the window.
             st.at = top_left(centre, st.size, &c);
             let flags = SWP_NOSIZE | SWP_NOACTIVATE;
             let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), st.at.x, st.at.y, 0, 0, flags);
@@ -231,13 +238,14 @@ fn top_left(centre: POINT, (w, h): (i32, i32), c: &Crosshair) -> POINT {
     }
 }
 
-/// Screen point the crosshair is centred on: the middle of the focused game's client area
-/// (right for both windowed and borderless games), otherwise the middle of whichever monitor
-/// the focused window is on.
-unsafe fn target(fg: HWND, in_game: bool) -> POINT {
+/// Screen point the crosshair is centred on: the middle of the monitor the focused game is on,
+/// or of the main monitor when no game is focused. Only games marked as windowed centre on their
+/// window, since that's where their own crosshair is. (Centring on whatever window was focused
+/// made it drift: a maximized window stops at the taskbar, so its middle is above the screen's.)
+unsafe fn target(fg: HWND, in_game: bool, windowed: bool) -> POINT {
     unsafe {
         let mut r = RECT::default();
-        if in_game && GetClientRect(fg, &mut r).is_ok() && r.right > 0 && r.bottom > 0 {
+        if windowed && GetClientRect(fg, &mut r).is_ok() && r.right > 0 && r.bottom > 0 {
             let mut p = POINT {
                 x: r.right / 2,
                 y: r.bottom / 2,
@@ -250,7 +258,13 @@ unsafe fn target(fg: HWND, in_game: bool) -> POINT {
             cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
-        if GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTOPRIMARY), &mut mi).as_bool() {
+        let monitor = if in_game {
+            MonitorFromWindow(fg, MONITOR_DEFAULTTOPRIMARY)
+        } else {
+            // (0, 0) is always on the main monitor.
+            MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY)
+        };
+        if GetMonitorInfoW(monitor, &mut mi).as_bool() {
             let m = mi.rcMonitor;
             return POINT {
                 x: (m.left + m.right) / 2,

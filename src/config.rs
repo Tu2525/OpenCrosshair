@@ -131,6 +131,7 @@ pub struct Settings {
 pub struct Game {
     pub exe: String,    // e.g. "cs2.exe", matched case-insensitively
     pub preset: String, // preset to use in this game; empty = current crosshair
+    pub windowed: bool, // centre on the game's window instead of its monitor
 }
 
 impl Default for Settings {

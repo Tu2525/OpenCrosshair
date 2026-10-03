@@ -1,6 +1,6 @@
 [package]
 name = "opencrosshair"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 description = "A lightweight crosshair overlay for Windows games"
 license = "MIT"

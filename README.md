@@ -1,13 +1,13 @@
 # OpenCrosshair
 
-A crosshair overlay for Windows games. Free, open source, and small: one 7 MB exe written in Rust.
+A crosshair overlay for Windows games. Free, open source, and small: a single 6.5 MB exe written in
+Rust that uses about 4 MB of RAM while it sits in the tray.
 
 ![OpenCrosshair settings window](docs/crosshair.png)
 
-It draws your crosshair in a transparent, click-through window that sits on top of the game. It
-never touches the game itself: no DLL injection, no hooks, no reading game memory. It's the same
-approach most crosshair overlays use. Still, check your game's rules before using any
-overlay in competitive play.
+It draws your crosshair in a transparent, click-through window on top of the game. It never touches
+the game itself: no DLL injection, no hooks, no reading game memory. Still, check your game's rules
+before using any overlay in competitive play.
 
 ## Features
 
@@ -16,8 +16,9 @@ overlay in competitive play.
 - **Presets**, and a different preset for each game.
 - **Games only mode**: the crosshair shows while one of your games is focused and hides everywhere else.
   Games are listed by their real name and icon, read from the game's own exe.
+- **Lives in the tray**, out of your way and out of Alt+Tab. Click the icon for the settings.
 - **Rebindable global hotkeys**: F8 toggles the crosshair, F9 opens the settings.
-- **Start with Windows**, hidden until you press the hotkey.
+- **Start with Windows**, straight to the tray.
 - **Automatic updates** from GitHub releases. It waits until you've left your game before restarting.
 - Stays in the middle of the screen. If a game runs on your second monitor it follows the game there,
   and games you play in a window can be set to centre on that window instead.
@@ -27,6 +28,49 @@ overlay in competitive play.
 | Games | Presets | Settings |
 | --- | --- | --- |
 | ![Games page](docs/games.png) | ![Presets page](docs/presets.png) | ![Settings page](docs/settings.png) |
+
+## How it compares
+
+There are good crosshair overlays already. Here's how OpenCrosshair lines up against the popular ones,
+going by each project's own store page or README in October 2026. A dash means the page doesn't say.
+
+| | OpenCrosshair | [Crosshair X] | [HudSight] | [Simple Sight] | [CrossOver] | [simple-crosshair-overlay] |
+| --- | --- | --- | --- | --- | --- | --- |
+| Price | Free | Paid | Paid | Free | Free | Free |
+| Source code | Open (MIT) | Not published | Not published | Not published | Source-available (FSL-1.1-MIT) | Open (GPL-3.0) |
+| Built with | Rust, native Win32 | – | – | Electron | Electron | Rust |
+| Exclusive fullscreen | No | Yes, through Xbox Game Bar | Yes, through hooks or Game Bar | Yes, through a Game Bar extension | No | No |
+| Designer | Lines, 64×64 pixel canvas | Yes, with animations | Generator and image editor | Cross, circle, pixels | 530+ built-in | Built-in, scalable |
+| Import images | No | Yes | Yes | Yes | Yes | Yes |
+| Crosshair per game | Yes, automatic | Yes | – | Yes | – | – |
+| Hide or swap when aiming | No | Yes | – | Yes | Yes | – |
+| Community library | No | Steam Workshop | Steam Workshop | Steam Workshop | – | – |
+| Platforms | Windows | Windows | Windows | Windows | Windows, macOS, Linux | Windows |
+
+**Where OpenCrosshair is different**
+
+- **It's light.** One 6.5 MB exe with no browser engine inside. Simple Sight's install folder, for
+  comparison, is 525 MB; it and CrossOver are built on Electron, which bundles a copy of Chromium.
+  OpenCrosshair idles at about 4 MB of RAM in the tray and uses no measurable CPU while you play.
+- **It's yours to change.** MIT licensed, so you can fork it, ship it, or build it into something else.
+- **It figures out the game for you.** It notices which game is in front, switches to that game's
+  preset and hides itself everywhere else, with no profiles to switch by hand.
+- **Nothing to break with game updates.** It doesn't hook into games or rely on Game Bar, so a game
+  patch or a Windows update has nothing to break.
+
+**What it doesn't do (yet)**
+
+- Exclusive fullscreen. Use borderless or windowed mode; the others get there through Game Bar or hooks.
+- Importing PNG images. The pixel canvas covers most of it, but not photos of real reticles.
+- Hiding or swapping the crosshair while you aim down sights.
+- A shared library of crosshairs from other players.
+- macOS and Linux.
+
+[Crosshair X]: https://store.steampowered.com/app/1366800
+[HudSight]: https://store.steampowered.com/app/1477830
+[Simple Sight]: https://store.steampowered.com/app/3256420
+[CrossOver]: https://github.com/lacymorrow/crossover
+[simple-crosshair-overlay]: https://github.com/zkxs/simple-crosshair-overlay
 
 ## Install
 
@@ -45,9 +89,10 @@ and nothing can draw on top of it without hooking into the game, which this deli
 ## Using it
 
 - **F8** shows or hides the crosshair, **F9** shows or hides the settings window. Both can be changed under Settings.
-- Launching OpenCrosshair while it's already running just brings up the settings.
-- It lives in the tray. Click the icon for settings, or right-click it to toggle the crosshair or quit.
+- Click the tray icon for the settings; right-click it to toggle the crosshair or quit. On Windows 11 a new
+  tray icon starts out behind the **^** arrow, and you can drag it onto the taskbar.
 - Closing the settings window hides it to the tray; the crosshair keeps running.
+- Launching OpenCrosshair while it's already running just brings up the settings.
 - Settings are saved as you change them, to `%APPDATA%\OpenCrosshair\settings.json`.
 
 ## How it works
@@ -59,8 +104,13 @@ Focus changes come from an out-of-context `SetWinEventHook`, so there's no polli
 into other processes. When the focused app is one of your games, the crosshair moves to the middle of
 the monitor that game is on, or to the middle of the game's window for games marked as windowed.
 
-The settings window uses [egui](https://github.com/emilk/egui). The app icon is drawn from code in
-`build.rs` at compile time, so there's no icon file to keep in sync.
+The settings window uses [egui](https://github.com/emilk/egui). With it open the app uses about 30 MB,
+mostly the window's OpenGL context and fonts. When it's hidden those pages sit untouched, so the app
+hands them back to Windows and drops to about 4 MB until you open the window again.
+
+Game names come from each exe's version info (what Task Manager shows), then its window title, and the
+icons come straight from the exe through the Shell API. The app icon is drawn from code in `build.rs` at
+compile time, so there's no icon file to keep in sync.
 
 Updates go through WinHTTP, which is part of Windows, so no TLS library ships with the app. A running exe
 can't be overwritten, but it can be renamed: the updater downloads the new build, checks it arrived
@@ -72,8 +122,9 @@ it installs itself instead of starting up.
 | File | What's in it |
 | --- | --- |
 | `src/render.rs` | Turns crosshair settings into pixels |
-| `src/overlay.rs` | The overlay window, hotkeys and focus tracking |
+| `src/overlay.rs` | The overlay window, tray icon, hotkeys and focus tracking |
 | `src/ui.rs` | Settings window |
+| `src/apps.rs` | Which app is in front, and its name and icon |
 | `src/config.rs` | Settings and presets, saved as JSON |
 | `src/update.rs` | Self-updater |
 | `src/install.rs` | Installer, uninstaller, start with Windows, single instance |

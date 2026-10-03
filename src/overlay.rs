@@ -149,6 +149,7 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
             ..Default::default()
         };
         apply(hwnd, &settings, &mut st);
+        let mut hidden_for = 0; // seconds the settings window has been hidden
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -169,6 +170,14 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
                         0,
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                     );
+                    // Once the settings window has stayed hidden a few seconds (it starts that way
+                    // at login), give its memory back. By then it has finished whatever it was
+                    // doing, like building itself at startup.
+                    let hidden = settings_window().is_some_and(|h| !IsWindowVisible(h).as_bool());
+                    hidden_for = if hidden { hidden_for + 1 } else { 0 };
+                    if hidden_for == 3 {
+                        trim_memory();
+                    }
                 }
                 m if m == show_msg => toggle_settings(true),
                 m if m == quit_msg => {

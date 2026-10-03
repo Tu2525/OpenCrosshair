@@ -1,5 +1,6 @@
 use crate::config::{
-    self, Aim, AimButton, Crosshair, Game, MAX_GRID, MAX_IMAGE, MAX_SCALE, Mode, Settings, Theme,
+    self, Aim, AimButton, AimRule, Crosshair, Game, MAX_GRID, MAX_IMAGE, MAX_SCALE, Mode, Settings,
+    Theme,
 };
 use crate::overlay::{self, KEY_OK, Status, VISIBLE};
 use crate::{apps, install, picture, render, update};
@@ -166,6 +167,7 @@ pub fn run(
                 undo: Vec::new(),
                 confirm_delete: None,
                 image_error: None,
+                open_game: None,
                 dirty: false,
             }))
         }),
@@ -319,6 +321,8 @@ struct App {
     confirm_delete: Option<String>,
     /// Why the last picture couldn't be used, shown on the Image card.
     image_error: Option<String>,
+    /// The game (by exe) whose aiming settings are open on the Games page.
+    open_game: Option<String>,
     dirty: bool,
 }
 
@@ -615,6 +619,67 @@ fn heading(ui: &mut egui::Ui, title: &str, sub: &str) {
     ui.label(RichText::new(title).heading().extra_letter_spacing(-0.4));
     ui.label(RichText::new(sub).color(pal().muted));
     ui.add_space(18.0);
+}
+
+/// The three choices that make up an aiming rule. Used for the default and for a game's own.
+fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimRule) {
+    let shown = match &rule.action {
+        Aim::Keep => "Keep the crosshair".to_string(),
+        Aim::Hide => "Hide it".to_string(),
+        Aim::Preset(name) => format!("Switch to {name}"),
+    };
+    egui::Grid::new(("aim_rule", id))
+        .num_columns(2)
+        .spacing([20.0, 10.0])
+        .show(ui, |ui| {
+            let label = ui.label(RichText::new("When you aim").color(pal().muted));
+            egui::ComboBox::from_id_salt((id, "action"))
+                .selected_text(shown)
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut rule.action, Aim::Keep, "Keep the crosshair");
+                    ui.selectable_value(&mut rule.action, Aim::Hide, "Hide it");
+                    for name in presets {
+                        let choice = format!("Switch to {name}");
+                        ui.selectable_value(&mut rule.action, Aim::Preset(name.clone()), choice);
+                    }
+                })
+                .response
+                .labelled_by(label.id);
+            ui.end_row();
+
+            let label = ui.label(RichText::new("Aim button").color(pal().muted));
+            egui::ComboBox::from_id_salt((id, "button"))
+                .selected_text(rule.button.label())
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    for b in AimButton::ALL {
+                        ui.selectable_value(&mut rule.button, b, b.label());
+                    }
+                })
+                .response
+                .labelled_by(label.id);
+            ui.end_row();
+
+            row(ui, "", |ui| {
+                check(
+                    ui,
+                    &mut rule.toggle,
+                    "Toggle: press once to aim, again to stop",
+                );
+            });
+        });
+}
+
+/// What a rule does, in a few words, for showing the default next to a game that follows it.
+fn describe_aim(rule: &AimRule) -> String {
+    let button = rule.button.label().to_lowercase();
+    let how = if rule.toggle { "toggled" } else { "held" };
+    match &rule.action {
+        Aim::Keep => "the crosshair never changes while aiming".to_string(),
+        Aim::Hide => format!("hide the crosshair while the {button} is {how}"),
+        Aim::Preset(name) => format!("switch to {name} while the {button} is {how}"),
+    }
 }
 
 /// A checkbox whose box you can actually see against the page.
@@ -1305,55 +1370,27 @@ impl App {
             ui.label(RichText::new(hint).small().color(pal().muted));
         });
 
+        // The default rule, which every game follows unless it has its own (see its row below).
+        let default_rule = AimRule {
+            action: s.aim.clone(),
+            button: s.aim_button,
+            toggle: s.aim_toggle,
+        };
+        let preset_names: Vec<String> = s.presets.keys().cloned().collect();
         card(ui, "While aiming", |ui| {
-            let names: Vec<String> = s.presets.keys().cloned().collect();
-            let shown = match &s.aim {
-                Aim::Keep => "Keep the crosshair".to_string(),
-                Aim::Hide => "Hide it".to_string(),
-                Aim::Preset(name) => format!("Switch to {name}"),
-            };
-            egui::Grid::new("aim")
-                .num_columns(2)
-                .spacing([20.0, 10.0])
-                .show(ui, |ui| {
-                    row(ui, "When you aim", |ui| {
-                        egui::ComboBox::from_id_salt("aim_action")
-                            .selected_text(shown)
-                            .width(220.0)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut s.aim, Aim::Keep, "Keep the crosshair");
-                                ui.selectable_value(&mut s.aim, Aim::Hide, "Hide it");
-                                for name in &names {
-                                    let label = format!("Switch to {name}");
-                                    ui.selectable_value(
-                                        &mut s.aim,
-                                        Aim::Preset(name.clone()),
-                                        label,
-                                    );
-                                }
-                            });
-                    });
-                    row(ui, "Aim button", |ui| {
-                        egui::ComboBox::from_id_salt("aim_button")
-                            .selected_text(s.aim_button.label())
-                            .width(220.0)
-                            .show_ui(ui, |ui| {
-                                for b in AimButton::ALL {
-                                    ui.selectable_value(&mut s.aim_button, b, b.label());
-                                }
-                            });
-                    });
-                    row(ui, "", |ui| {
-                        check(
-                            ui,
-                            &mut s.aim_toggle,
-                            "Toggle: press once to aim, again to stop",
-                        );
-                    });
-                });
+            let mut rule = default_rule.clone();
+            aim_controls(ui, "default", &preset_names, &mut rule);
+            (s.aim, s.aim_button, s.aim_toggle) = (rule.action, rule.button, rule.toggle);
             ui.label(
                 RichText::new(
                     "For games where you aim down sights. It reads the button's state, with no input hooks.",
+                )
+                .small()
+                .color(pal().muted),
+            );
+            ui.label(
+                RichText::new(
+                    "This is the default. A game can have its own: use the sliders button on its row below.",
                 )
                 .small()
                 .color(pal().muted),
@@ -1370,74 +1407,140 @@ impl App {
                 );
             }
             let mut remove = None;
-            egui::Grid::new("games")
-                .num_columns(5)
-                .spacing([14.0, 10.0])
-                .show(ui, |ui| {
-                    for (i, g) in s.games.iter_mut().enumerate() {
-                        let app = apps::App {
-                            exe: g.exe.clone(),
-                            path: g.path.clone(),
-                            title: String::new(),
-                        };
-                        let info = app_info(&mut self.apps, ui.ctx(), &app);
-                        let name = if g.name.is_empty() {
-                            &info.name
-                        } else {
-                            &g.name
-                        };
-                        ui.horizontal(|ui| {
-                            ui.set_min_width(170.0);
-                            app_icon(ui, info, 24.0);
-                            let full = if g.path.is_empty() { &g.exe } else { &g.path };
-                            ui.label(RichText::new(name).semi()).on_hover_text(full);
+            for (i, g) in s.games.iter_mut().enumerate() {
+                let app = apps::App {
+                    exe: g.exe.clone(),
+                    path: g.path.clone(),
+                    title: String::new(),
+                };
+                let info = app_info(&mut self.apps, ui.ctx(), &app);
+                let name = if g.name.is_empty() {
+                    &info.name
+                } else {
+                    &g.name
+                };
+                let open = self.open_game.as_deref() == Some(g.exe.as_str());
+                ui.horizontal(|ui| {
+                    // Fixed width, so every row lines up whatever the game is called.
+                    let name_cell = vec2(170.0, 34.0);
+                    let cell = egui::Layout::left_to_right(egui::Align::Center);
+                    ui.allocate_ui_with_layout(name_cell, cell, |ui| {
+                        ui.set_min_size(name_cell); // otherwise it shrinks to fit the name
+                        app_icon(ui, info, 24.0);
+                        let full = if g.path.is_empty() { &g.exe } else { &g.path };
+                        ui.add(egui::Label::new(RichText::new(name).semi()).truncate())
+                            .on_hover_text(full);
+                    });
+                    let c = s.presets.get(&g.preset).unwrap_or(&s.crosshair);
+                    let t = texture(&mut self.textures, ui.ctx(), &format!("game:{}", g.exe), c);
+                    thumb(ui, &t, 34.0);
+                    let shown = if g.preset.is_empty() {
+                        "Current crosshair"
+                    } else {
+                        g.preset.as_str()
+                    };
+                    egui::ComboBox::from_id_salt(("preset", i))
+                        .selected_text(shown)
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut g.preset, String::new(), "Current crosshair");
+                            for name in s.presets.keys() {
+                                ui.selectable_value(&mut g.preset, name.clone(), name);
+                            }
                         });
-                        let c = s.presets.get(&g.preset).unwrap_or(&s.crosshair);
-                        let t =
-                            texture(&mut self.textures, ui.ctx(), &format!("game:{}", g.exe), c);
-                        thumb(ui, &t, 34.0);
-                        let shown = if g.preset.is_empty() {
-                            "Current crosshair"
-                        } else {
-                            g.preset.as_str()
-                        };
-                        egui::ComboBox::from_id_salt(("preset", i))
-                            .selected_text(shown)
-                            .width(150.0)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut g.preset,
-                                    String::new(),
-                                    "Current crosshair",
-                                );
-                                for name in s.presets.keys() {
-                                    ui.selectable_value(&mut g.preset, name.clone(), name);
-                                }
-                            });
-                        let windowed = check(ui, &mut g.windowed, "Windowed").on_hover_text(
-                            "Only for games you play in a window: centres the crosshair on the \
-                             game's window instead of the middle of the screen.",
-                        );
-                        // Three rows all say "Windowed", so say which game each belongs to.
-                        let (on, label) = (g.windowed, format!("Windowed: {name}"));
-                        windowed.widget_info(|| {
-                            egui::WidgetInfo::selected(
-                                egui::WidgetType::Checkbox,
-                                true,
-                                on,
-                                label.clone(),
-                            )
-                        });
-                        if name_it(ghost(ui, icon::X), format!("Remove {name}"))
-                            .on_hover_text("Remove")
-                            .clicked()
-                        {
-                            remove = Some(i);
-                        }
-                        ui.end_row();
+                    let windowed = check(ui, &mut g.windowed, "Windowed").on_hover_text(
+                        "Only for games you play in a window: centres the crosshair on the \
+                         game's window instead of the middle of the screen.",
+                    );
+                    // Every row says "Windowed", so say which game each belongs to.
+                    let (on, label) = (g.windowed, format!("Windowed: {name}"));
+                    windowed.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::Checkbox,
+                            true,
+                            on,
+                            label.clone(),
+                        )
+                    });
+                    // This game's own aiming rule: lit up when it has one, filled while open.
+                    let custom = g.aim.is_some();
+                    let ink = if open || custom {
+                        pal().accent
+                    } else {
+                        pal().muted
+                    };
+                    let sliders =
+                        egui::Button::new(RichText::new(icon::SLIDERS_HORIZONTAL).color(ink))
+                            .frame_when_inactive(open);
+                    let tip = if custom {
+                        "This game has its own aiming rule"
+                    } else {
+                        "Aiming settings for this game"
+                    };
+                    let sliders = name_it(ui.add(sliders), format!("Aiming settings for {name}"));
+                    if sliders.on_hover_text(tip).clicked() {
+                        self.open_game = if open { None } else { Some(g.exe.clone()) };
+                    }
+                    if name_it(ghost(ui, icon::X), format!("Remove {name}"))
+                        .on_hover_text("Remove")
+                        .clicked()
+                    {
+                        remove = Some(i);
                     }
                 });
+                if open {
+                    egui::Frame::new()
+                        .fill(pal().field)
+                        .corner_radius(8)
+                        .inner_margin(egui::Margin::symmetric(16, 14))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(RichText::new(format!("Aiming in {name}")).semi());
+                            ui.label(
+                                RichText::new(
+                                    "What a mouse button does to the crosshair in this game. \
+                                     Choose \"Keep the crosshair\" to make it ignore aiming here.",
+                                )
+                                .small()
+                                .color(pal().muted),
+                            );
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                let default = vec2(140.0, 30.0);
+                                if segment(ui, "Use my default".into(), g.aim.is_none(), default)
+                                    .clicked()
+                                {
+                                    g.aim = None;
+                                }
+                                let own = vec2(180.0, 30.0);
+                                if segment(ui, "Custom for this game".into(), g.aim.is_some(), own)
+                                    .clicked()
+                                    && g.aim.is_none()
+                                {
+                                    g.aim = Some(default_rule.clone()); // start from the default
+                                }
+                            });
+                            match &mut g.aim {
+                                Some(rule) => aim_controls(ui, &g.exe, &preset_names, rule),
+                                None => {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "Using your default: {}.",
+                                            describe_aim(&default_rule)
+                                        ))
+                                        .small()
+                                        .color(pal().muted),
+                                    );
+                                }
+                            }
+                        });
+                    ui.add_space(6.0);
+                }
+            }
             if let Some(i) = remove {
+                if self.open_game.as_deref() == Some(s.games[i].exe.as_str()) {
+                    self.open_game = None;
+                }
                 s.games.remove(i);
             }
             // Fullscreen optimizations switched off means true exclusive fullscreen, where no

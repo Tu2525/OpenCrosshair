@@ -63,6 +63,15 @@ impl AimButton {
     }
 }
 
+/// How aiming works in one place: what happens, and which button means "I'm aiming".
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AimRule {
+    pub action: Aim,
+    pub button: AimButton,
+    pub toggle: bool, // press once to aim, again to stop (games with toggle ADS)
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Crosshair {
@@ -203,6 +212,8 @@ pub struct Game {
     pub path: String,   // full path when known, for the app's icon
     pub preset: String, // preset to use in this game; empty = current crosshair
     pub windowed: bool, // centre on the game's window instead of its monitor
+    /// This game's own aiming rule. None means the default under "While aiming".
+    pub aim: Option<AimRule>,
 }
 
 impl Default for Settings {
@@ -261,6 +272,15 @@ pub fn import_image(src: &Path) -> std::io::Result<String> {
 }
 
 impl Settings {
+    /// The aiming rule in effect for a game: its own if it has one, otherwise the default.
+    pub fn aim_rule_for(&self, game: Option<&Game>) -> AimRule {
+        game.and_then(|g| g.aim.clone()).unwrap_or_else(|| AimRule {
+            action: self.aim.clone(),
+            button: self.aim_button,
+            toggle: self.aim_toggle,
+        })
+    }
+
     pub fn load() -> Self {
         let p = path();
         // Settings from before the rename.
@@ -290,5 +310,45 @@ impl Settings {
         if std::fs::write(&tmp, serde_json::to_vec(self).unwrap()).is_ok() {
             let _ = std::fs::rename(tmp, p);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_game_can_override_the_default_aiming_rule() {
+        let s = Settings {
+            aim: Aim::Hide,
+            aim_button: AimButton::Middle,
+            ..Default::default()
+        };
+        let mut cs = Game {
+            exe: "cs2.exe".into(),
+            ..Default::default()
+        };
+
+        // No rule of its own: it follows the default, and so does anything that isn't a game.
+        assert!(s.aim_rule_for(Some(&cs)).action == Aim::Hide);
+        assert!(s.aim_rule_for(None).button == AimButton::Middle);
+
+        // "Right-click does nothing here": the game opts out while the default stays on.
+        cs.aim = Some(AimRule::default());
+        let rule = s.aim_rule_for(Some(&cs));
+        assert!(rule.action == Aim::Keep && rule.button == AimButton::Right);
+        assert!(
+            s.aim_rule_for(None).action == Aim::Hide,
+            "other apps still use the default"
+        );
+    }
+
+    #[test]
+    fn settings_saved_before_per_game_rules_still_load() {
+        // Roughly what v0.2.0 wrote: a game with no "aim" field at all.
+        let old = r#"{"aim":{"Preset":"Dot"},"games":[{"exe":"cs2.exe","preset":"Classic"}]}"#;
+        let s: Settings = serde_json::from_str(old).unwrap();
+        assert!(s.games[0].aim.is_none());
+        assert!(s.aim_rule_for(Some(&s.games[0])).action == Aim::Preset("Dot".into()));
     }
 }

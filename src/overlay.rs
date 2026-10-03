@@ -232,6 +232,7 @@ struct State {
     drawn: Option<Crosshair>, // skip re-rendering when nothing changed
     size: (i32, i32),
     at: POINT,
+    last_exe: String, // which app was in front last time apply() ran
     aiming: bool,
     aim_down: bool, // button state last time, for toggle mode
     aim_vk: i32,
@@ -277,14 +278,22 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             None if s.only_games => Status::Waiting,
             None => Status::Everywhere,
         };
+        // The game's own aiming rule if it has one, otherwise the default.
+        let rule = s.aim_rule_for(game);
+        // Switching apps ends an aim that was in progress (a toggled one would carry over).
+        if st.last_exe != exe {
+            st.last_exe = exe.clone();
+            st.aiming = false;
+            st.aim_down = false;
+        }
         // Aiming only counts while the crosshair is up somewhere it should react to it.
-        let aim_on = s.aim != Aim::Keep && show && !ours;
+        let aim_on = rule.action != Aim::Keep && show && !ours;
         if !aim_on {
             st.aiming = false;
         }
-        (st.aim_vk, st.aim_toggle) = (s.aim_button.vk(), s.aim_toggle);
+        (st.aim_vk, st.aim_toggle) = (rule.button.vk(), rule.toggle);
         if st.aiming {
-            match &s.aim {
+            match &rule.action {
                 Aim::Hide => show = false,
                 Aim::Preset(name) => {
                     if let Some(p) = s.presets.get(name) {

@@ -17,7 +17,8 @@ before using any overlay in competitive play.
   then set its size and opacity. It's copied into the app's folder, so moving the original doesn't break it.
 - **Presets**, and a different preset for each game.
 - **While aiming**: hide the crosshair or switch to another preset while you hold (or toggle) a mouse
-  button, for games with aim down sights.
+  button, for games with aim down sights. Set a default, then give any game its own rule, or tell it
+  to ignore aiming altogether (so right-click can do nothing in one game and something in another).
 - **Games only mode**: the crosshair shows while one of your games is focused and hides everywhere else.
   Games are listed by their real name and icon, read from the game's own exe.
 - **Light and dark themes**. It follows Windows' app mode, or you can pick one in Settings.
@@ -41,6 +42,11 @@ The same pages in the light theme:
 | Crosshair | Games |
 | --- | --- |
 | ![Crosshair page, light theme](docs/light-crosshair.png) | ![Games page, light theme](docs/light-games.png) |
+
+Each game can follow your default aiming rule or have its own. Here Counter-Strike 2 is set to keep the
+crosshair as it is, so the mouse button does nothing there, while other games still switch or hide it:
+
+![A game's own aiming rule](docs/game-aim.png)
 
 ## How it compares
 
@@ -134,8 +140,8 @@ into other processes. When the focused app is one of your games, the crosshair m
 the monitor that game is on, or to the middle of the game's window for games marked as windowed.
 
 "While aiming" only checks the mouse button (about 60 times a second, with `GetAsyncKeyState`) while one
-of your games is in front and an aiming action is set. It reads the button's state; it never installs an
-input hook.
+of your games is in front and that game's rule (its own, or the default) has an action set. It reads the
+button's state; it never installs an input hook.
 
 Pictures are decoded by the Windows Imaging Component that ships with Windows, so there's no image
 library in the exe either.

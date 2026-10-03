@@ -1,7 +1,7 @@
 # OpenCrosshair
 
-A crosshair overlay for Windows games. Free, open source, and small: a single 6.5 MB exe written in
-Rust that uses about 4 MB of RAM while it sits in the tray.
+A crosshair overlay for Windows games. Free, open source, and small: a single 7 MB exe written in
+Rust that uses just a few MB of RAM while it sits in the tray.
 
 ![OpenCrosshair settings window](docs/crosshair.png)
 
@@ -21,6 +21,8 @@ before using any overlay in competitive play.
 - **Games only mode**: the crosshair shows while one of your games is focused and hides everywhere else.
   Games are listed by their real name and icon, read from the game's own exe.
 - **Light and dark themes**. It follows Windows' app mode, or you can pick one in Settings.
+- **Keyboard and screen reader friendly**: every control can be reached with Tab, and the window is
+  exposed to Windows UI Automation, which is what screen readers such as Narrator and NVDA read.
 - **Lives in the tray**, out of your way and out of Alt+Tab. Click the icon for the settings.
 - **Rebindable global hotkeys**: F8 toggles the crosshair, F9 opens the settings.
 - **Start with Windows**, straight to the tray.
@@ -60,9 +62,9 @@ going by each project's own store page or README in October 2026. A dash means t
 
 **Where OpenCrosshair is different**
 
-- **It's light.** One 6.5 MB exe with no browser engine inside. Simple Sight's install folder, for
+- **It's light.** One 7 MB exe with no browser engine inside. Simple Sight's install folder, for
   comparison, is 525 MB; it and CrossOver are built on Electron, which bundles a copy of Chromium.
-  OpenCrosshair idles at about 4 MB of RAM in the tray and uses no measurable CPU while you play.
+  OpenCrosshair idles at a few MB of RAM in the tray and uses no measurable CPU while you play.
 - **It's yours to change.** MIT licensed, so you can fork it, ship it, or build it into something else.
 - **It figures out the game for you.** It notices which game is in front, switches to that game's
   preset and hides itself everywhere else, with no profiles to switch by hand.
@@ -138,9 +140,15 @@ input hook.
 Pictures are decoded by the Windows Imaging Component that ships with Windows, so there's no image
 library in the exe either.
 
-The settings window uses [egui](https://github.com/emilk/egui). With it open the app uses about 30 MB,
+The settings window uses [egui](https://github.com/emilk/egui). With it open the app uses about 28 MB,
 mostly the window's OpenGL context and fonts. When it's hidden those pages sit untouched, so the app
-hands them back to Windows and drops to about 4 MB until you open the window again.
+hands them back to Windows and drops to a few MB or less until you open the window again.
+
+The interface is set in Windows' own Segoe UI and Consolas, read from the Windows fonts folder, so no
+font is bundled (egui's built-in fonts take over if those files are missing). Screen reader support
+comes from egui's AccessKit integration: it adds about 0.3 MB to the exe and costs nothing while idle.
+Colours are two palettes, light and dark, and their text colours are checked against WCAG contrast
+(4.5:1 for text, 3:1 for control outlines).
 
 Game names come from each exe's version info (what Task Manager shows), then its window title, and the
 icons come straight from the exe through the Shell API. The app icon is drawn from code in `build.rs` at

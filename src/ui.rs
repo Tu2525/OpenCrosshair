@@ -19,6 +19,7 @@ struct Palette {
     side: Color32,  // sidebar
     field: Color32, // buttons and inputs at rest
     hover: Color32,
+    press: Color32,   // while a button is held down
     control: Color32, // checkbox boxes and slider rails
     edge: Color32,    // outline of checkboxes, 3:1 against the page so you can see them
     popup: Color32,
@@ -39,6 +40,7 @@ const DARK: Palette = Palette {
     side: Color32::from_rgb(23, 23, 22),
     field: Color32::from_rgb(34, 34, 32),
     hover: Color32::from_rgb(44, 44, 42),
+    press: Color32::from_rgb(58, 58, 55),
     control: Color32::from_rgb(46, 46, 43),
     edge: Color32::from_rgb(112, 110, 105),
     popup: Color32::from_rgb(23, 23, 22),
@@ -71,6 +73,7 @@ const LIGHT: Palette = Palette {
     side: Color32::from_rgb(244, 243, 239),
     field: Color32::from_rgb(238, 237, 233),
     hover: Color32::from_rgb(227, 226, 221),
+    press: Color32::from_rgb(212, 210, 204),
     control: Color32::from_rgb(226, 224, 219),
     edge: Color32::from_rgb(128, 126, 120),
     popup: Color32::from_rgb(255, 255, 255),
@@ -190,14 +193,14 @@ fn visuals(base: egui::Visuals, p: &Palette) -> egui::Visuals {
     for (w, fill) in [
         (&mut v.widgets.inactive, p.field),
         (&mut v.widgets.hovered, p.hover),
-        (&mut v.widgets.active, p.hover),
+        (&mut v.widgets.active, p.press),
         (&mut v.widgets.open, p.hover),
     ] {
         w.corner_radius = CornerRadius::same(6);
         // Buttons use the weak fill; checkbox boxes and slider rails use the other one, which
         // needs to be clearly different from the page behind them.
         w.weak_bg_fill = fill;
-        w.bg_fill = if fill == p.field { p.control } else { p.hover };
+        w.bg_fill = if fill == p.field { p.control } else { fill };
         w.bg_stroke = Stroke::NONE;
     }
     v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.border);
@@ -205,10 +208,66 @@ fn visuals(base: egui::Visuals, p: &Palette) -> egui::Visuals {
     v
 }
 
-fn style(ctx: &egui::Context) {
+const SEMIBOLD: &str = "semibold";
+
+fn semibold() -> egui::FontFamily {
+    egui::FontFamily::Name(SEMIBOLD.into())
+}
+
+/// A real semibold weight, for titles and labels. (egui's own `.semi()` only changes the colour,
+/// so the interface had a single weight.)
+trait Semi {
+    fn semi(self) -> RichText;
+}
+
+impl Semi for RichText {
+    fn semi(self) -> RichText {
+        self.family(semibold())
+    }
+}
+
+/// A font file from Windows' own font folder. Nothing is bundled or downloaded; if it's missing
+/// the interface quietly keeps egui's built-in fonts.
+fn system_font(file: &str) -> Option<Arc<egui::FontData>> {
+    let windows = std::env::var_os("WINDIR").unwrap_or_else(|| r"C:\Windows".into());
+    let bytes = std::fs::read(std::path::Path::new(&windows).join("Fonts").join(file)).ok()?;
+    Some(Arc::new(egui::FontData::from_owned(bytes)))
+}
+
+fn fonts() -> egui::FontDefinitions {
+    use egui::FontFamily::{Monospace, Proportional};
     let mut fonts = egui::FontDefinitions::default();
+    // Semibold starts as a copy of the normal fallbacks, so it still works without the files.
+    let fallbacks = fonts.families[&Proportional].clone();
+    fonts.families.insert(semibold(), fallbacks);
+    for (key, file, families) in [
+        ("segoe", "segoeui.ttf", vec![Proportional]),
+        ("segoe-semibold", "seguisb.ttf", vec![semibold()]),
+        ("consolas", "consola.ttf", vec![Monospace]),
+    ] {
+        if let Some(data) = system_font(file) {
+            fonts.font_data.insert(key.into(), data);
+            for family in families {
+                fonts
+                    .families
+                    .get_mut(&family)
+                    .unwrap()
+                    .insert(0, key.into());
+            }
+        }
+    }
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Bold);
-    ctx.set_fonts(fonts);
+    // Icons sit inside labels ("icon  Name"), so semibold text needs them as a fallback too.
+    fonts
+        .families
+        .get_mut(&semibold())
+        .unwrap()
+        .insert(1, "phosphor".into());
+    fonts
+}
+
+fn style(ctx: &egui::Context) {
+    ctx.set_fonts(fonts());
 
     ctx.set_visuals_of(egui::Theme::Dark, visuals(egui::Visuals::dark(), &DARK));
     ctx.set_visuals_of(egui::Theme::Light, visuals(egui::Visuals::light(), &LIGHT));
@@ -218,11 +277,11 @@ fn style(ctx: &egui::Context) {
         s.spacing.slider_width = 260.0;
         s.spacing.interact_size.y = 28.0;
         use egui::TextStyle::*;
-        s.text_styles.insert(Heading, FontId::proportional(26.0));
-        s.text_styles.insert(Body, FontId::proportional(14.5));
-        s.text_styles.insert(Button, FontId::proportional(14.5));
-        s.text_styles.insert(Small, FontId::proportional(11.5));
-        s.text_styles.insert(Monospace, FontId::monospace(13.0));
+        s.text_styles.insert(Heading, FontId::new(28.0, semibold()));
+        s.text_styles.insert(Body, FontId::proportional(14.0));
+        s.text_styles.insert(Button, FontId::proportional(14.0));
+        s.text_styles.insert(Small, FontId::proportional(12.5)); // 12 is about the floor for legibility
+        s.text_styles.insert(Monospace, FontId::monospace(13.5));
     });
 }
 
@@ -405,7 +464,7 @@ impl eframe::App for App {
 
 // ---------- small building blocks ----------
 
-/// Flat card: hairline border, no fill change, small uppercase caption.
+/// Flat card: hairline border, no fill change, and a quiet semibold caption in sentence case.
 fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let r = egui::Frame::new()
         .stroke(Stroke::new(1.0, pal().border))
@@ -414,19 +473,117 @@ fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             if !title.is_empty() {
-                ui.label(
-                    RichText::new(title.to_uppercase())
-                        .small()
-                        .strong()
-                        .color(pal().muted)
-                        .extra_letter_spacing(1.0),
-                );
-                ui.add_space(4.0);
+                ui.label(RichText::new(title).size(13.0).semi().color(pal().muted));
+                ui.add_space(6.0);
             }
             add(ui)
         })
         .inner;
     ui.add_space(14.0);
+    r
+}
+
+/// What to show where a list would be: what this is, and how to start.
+fn empty_state(ui: &mut egui::Ui, icon: &str, title: &str, body: &str) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(6.0);
+        let (rect, _) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::hover());
+        let p = ui.painter();
+        p.rect_filled(rect, 10, pal().field);
+        p.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            icon,
+            FontId::proportional(22.0),
+            pal().muted,
+        );
+        ui.add_space(6.0);
+        ui.label(RichText::new(title).semi());
+        ui.label(RichText::new(body).small().color(pal().muted));
+        ui.add_space(6.0);
+    });
+}
+
+/// A sidebar entry. Icons sit in a fixed column so labels line up; hover gets a soft fill, and the
+/// page you're on gets a stronger one, an accent bar and a semibold label.
+fn nav_item(ui: &mut egui::Ui, icon: &str, label: &str, on: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
+    if ui.is_rect_visible(rect) {
+        let p = pal();
+        let fill = if on {
+            p.hover
+        } else if resp.hovered() {
+            p.field
+        } else {
+            Color32::TRANSPARENT
+        };
+        let ink = if on || resp.hovered() {
+            p.text
+        } else {
+            p.muted
+        };
+        let painter = ui.painter();
+        painter.rect_filled(rect, 8, fill);
+        if on {
+            let bar =
+                Rect::from_center_size(pos2(rect.left() + 4.0, rect.center().y), vec2(3.0, 18.0));
+            painter.rect_filled(bar, 2, p.accent);
+        }
+        if resp.has_focus() {
+            painter.rect_stroke(rect, 8, Stroke::new(1.5, p.accent), StrokeKind::Inside);
+        }
+        let family = if on {
+            semibold()
+        } else {
+            egui::FontFamily::Proportional
+        };
+        let mid = rect.center().y;
+        painter.text(
+            pos2(rect.left() + 18.0, mid),
+            Align2::LEFT_CENTER,
+            icon,
+            FontId::proportional(17.0),
+            ink,
+        );
+        painter.text(
+            pos2(rect.left() + 46.0, mid),
+            Align2::LEFT_CENTER,
+            label,
+            FontId::new(15.0, family),
+            ink,
+        );
+    }
+    resp
+}
+
+/// One option of a segmented control: solid when chosen, quiet (with hover feedback) otherwise.
+fn segment(ui: &mut egui::Ui, text: String, on: bool, size: egui::Vec2) -> egui::Response {
+    let ink = if on { pal().bg } else { pal().muted };
+    let mut btn = egui::Button::new(RichText::new(&text).semi().color(ink)).min_size(size);
+    if on {
+        btn = btn.fill(pal().text);
+    }
+    let r = ui.add(btn);
+    // Screen readers hear "Lines, selected", not the icon character in front of it.
+    r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, plain(&text)));
+    r
+}
+
+/// Text without the icon glyphs (they live in Unicode's private-use area, so a screen reader would
+/// announce them as nothing or as noise) and without the padding after them.
+fn plain(text: &str) -> String {
+    text.chars()
+        .filter(|c| !('\u{E000}'..='\u{F8FF}').contains(c))
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// What a screen reader should say for a widget, when the widget's own text isn't enough.
+fn name_it(r: egui::Response, label: impl ToString) -> egui::Response {
+    let label = label.to_string();
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone()));
     r
 }
 
@@ -437,13 +594,25 @@ fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
 }
 
 fn slider(ui: &mut egui::Ui, label: &str, v: &mut u32, range: std::ops::RangeInclusive<u32>) {
-    row(ui, label, |ui| {
-        ui.add(Slider::new(v, range));
-    });
+    slider_when(ui, true, label, v, range);
+}
+
+/// A labelled slider that can be greyed out, for settings that only apply when another is on.
+fn slider_when(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    label: &str,
+    v: &mut u32,
+    range: std::ops::RangeInclusive<u32>,
+) {
+    let text = ui.label(RichText::new(label).color(pal().muted));
+    ui.add_enabled(enabled, Slider::new(v, range))
+        .labelled_by(text.id);
+    ui.end_row();
 }
 
 fn heading(ui: &mut egui::Ui, title: &str, sub: &str) {
-    ui.label(RichText::new(title).heading().strong());
+    ui.label(RichText::new(title).heading().extra_letter_spacing(-0.4));
     ui.label(RichText::new(sub).color(pal().muted));
     ui.add_space(18.0);
 }
@@ -467,16 +636,30 @@ fn check(
     .inner
 }
 
-/// Solid light button with dark text: the one primary action on a card.
+/// Solid button in the text colour: the one primary action on a card. It softens a little on hover
+/// and a little more while pressed.
 fn primary(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Response {
-    ui.add_enabled(
-        enabled,
-        egui::Button::new(RichText::new(text).color(pal().bg).strong()).fill(pal().text),
-    )
+    let r = ui
+        .scope(|ui| {
+            let p = pal();
+            let w = &mut ui.visuals_mut().widgets;
+            w.inactive.weak_bg_fill = p.text;
+            w.hovered.weak_bg_fill = p.text.lerp_to_gamma(p.bg, 0.14);
+            w.active.weak_bg_fill = p.text.lerp_to_gamma(p.bg, 0.28);
+            ui.add_enabled(
+                enabled,
+                egui::Button::new(RichText::new(text).color(p.bg).semi()),
+            )
+        })
+        .inner;
+    name_it(r, plain(text))
 }
 
+/// A quiet button: no frame until you point at it.
 fn ghost(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new(text).color(pal().muted)).fill(Color32::TRANSPARENT))
+    let r = ui
+        .add(egui::Button::new(RichText::new(text).color(pal().muted)).frame_when_inactive(false));
+    name_it(r, plain(text))
 }
 
 /// Small uppercase pill.
@@ -489,7 +672,7 @@ fn badge(ui: &mut egui::Ui, text: &str, (bg, fg): (Color32, Color32)) {
             ui.label(
                 RichText::new(text.to_uppercase())
                     .small()
-                    .strong()
+                    .semi()
                     .color(fg)
                     .extra_letter_spacing(0.6),
             );
@@ -498,17 +681,33 @@ fn badge(ui: &mut egui::Ui, text: &str, (bg, fg): (Color32, Color32)) {
 
 /// Keyboard key rendered as a keycap.
 fn keycap(ui: &mut egui::Ui, text: &str, active: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(190.0, 34.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
+    let p = pal();
     let (fill, stroke) = if active {
-        (pal().accent.gamma_multiply(0.18), pal().accent)
+        (p.accent.gamma_multiply(0.18), p.accent)
+    } else if resp.is_pointer_button_down_on() {
+        (p.press, p.border)
+    } else if resp.hovered() {
+        (p.hover, p.border)
     } else {
-        (pal().field, pal().border)
+        (p.field, p.border)
     };
-    ui.add(
-        egui::Button::new(RichText::new(text).monospace().strong())
-            .fill(fill)
-            .stroke(Stroke::new(1.0, stroke))
-            .min_size(vec2(190.0, 34.0)),
-    )
+    let painter = ui.painter();
+    painter.rect(rect, 6, fill, Stroke::new(1.0, stroke), StrokeKind::Inside);
+    if resp.has_focus() {
+        painter.rect_stroke(rect, 6, Stroke::new(1.5, p.accent), StrokeKind::Inside);
+    }
+    // Monospace fonts reserve more room below the baseline, which makes centred text look high.
+    let nudge = vec2(0.0, 2.5);
+    painter.text(
+        rect.center() + nudge,
+        Align2::CENTER_CENTER,
+        text,
+        FontId::monospace(13.5),
+        p.text,
+    );
+    resp
 }
 
 /// A rendered crosshair, and where its centre is inside the texture.
@@ -657,7 +856,12 @@ impl App {
                     .size(22.0)
                     .color(pal().accent),
             );
-            ui.label(RichText::new("OpenCrosshair").size(18.0).strong());
+            ui.label(
+                RichText::new("OpenCrosshair")
+                    .size(18.0)
+                    .semi()
+                    .extra_letter_spacing(-0.2),
+            );
         });
         ui.add_space(22.0);
         for (p, ic, name) in [
@@ -666,18 +870,7 @@ impl App {
             (Page::Presets, icon::BOOKMARKS_SIMPLE, "Presets"),
             (Page::Settings, icon::GEAR_SIX, "Settings"),
         ] {
-            let on = self.page == p;
-            let text = RichText::new(format!("{ic}    {name}"))
-                .size(15.0)
-                .color(if on { pal().text } else { pal().muted });
-            let btn = egui::Button::new(text)
-                .fill(if on {
-                    pal().field
-                } else {
-                    Color32::TRANSPARENT
-                })
-                .min_size(vec2(ui.available_width(), 38.0));
-            if ui.add(btn).clicked() {
+            if nav_item(ui, ic, name, self.page == p).clicked() {
                 self.page = p;
                 self.listening = None;
                 self.confirm_delete = None;
@@ -696,7 +889,7 @@ impl App {
                 Status::Fullscreen(exe) => (
                     "Fullscreen",
                     pal().yellow,
-                    format!("{}: if you can't see it, use borderless", game_name(&exe)),
+                    format!("{}: can't see it? Use borderless.", game_name(&exe)),
                 ),
                 Status::Waiting => ("Waiting", pal().yellow, "No game in focus".to_string()),
                 Status::Hidden => ("Hidden", pal().gray, format!("{toggle} shows it again")),
@@ -707,24 +900,13 @@ impl App {
             ui.add_space(6.0);
 
             let vis = VISIBLE.load(Ordering::Relaxed);
-            let btn = if vis {
-                egui::Button::new(
-                    RichText::new(format!("{}   Overlay on", icon::POWER))
-                        .strong()
-                        .color(pal().bg),
-                )
-                .fill(pal().text)
-            } else {
-                egui::Button::new(
-                    RichText::new(format!("{}   Overlay off", icon::POWER))
-                        .strong()
-                        .color(pal().muted),
-                )
-                .fill(pal().field)
-            };
+            let label = format!(
+                "{}   Overlay {}",
+                icon::POWER,
+                if vis { "on" } else { "off" }
+            );
             let hint = format!("Toggle: {toggle}");
-            if ui
-                .add(btn.min_size(vec2(ui.available_width(), 40.0)))
+            if segment(ui, label, vis, vec2(ui.available_width(), 40.0))
                 .on_hover_text(hint)
                 .clicked()
             {
@@ -754,15 +936,7 @@ impl App {
                 (Mode::Pixels, icon::PAINT_BRUSH, "Pixel canvas"),
                 (Mode::Image, icon::IMAGE, "Image"),
             ] {
-                let on = c.mode == m;
-                let btn = egui::Button::new(
-                    RichText::new(format!("{ic}  {name}"))
-                        .color(if on { pal().bg } else { pal().muted })
-                        .strong(),
-                )
-                .fill(if on { pal().text } else { pal().field })
-                .min_size(vec2(130.0, 34.0));
-                if ui.add(btn).clicked() {
+                if segment(ui, format!("{ic}  {name}"), c.mode == m, vec2(130.0, 34.0)).clicked() {
                     c.mode = m;
                 }
             }
@@ -846,7 +1020,7 @@ impl App {
                 let current = if c.image.is_empty() {
                     "No image yet".to_string()
                 } else {
-                    "Imported".to_string()
+                    "Image in use".to_string()
                 };
                 ui.label(RichText::new(current).color(pal().muted));
             });
@@ -919,7 +1093,10 @@ impl App {
                     slider(ui, "Pixel scale", &mut c.scale, 1..=MAX_SCALE);
                     row(ui, "Brush", |ui| {
                         ui.horizontal(|ui| {
-                            ui.color_edit_button_srgba_unmultiplied(&mut self.brush);
+                            name_it(
+                                ui.color_edit_button_srgba_unmultiplied(&mut self.brush),
+                                "Brush colour",
+                            );
                             ui.toggle_value(
                                 &mut self.mirror_x,
                                 format!("{} Mirror X", icon::FLIP_HORIZONTAL),
@@ -1089,7 +1266,7 @@ impl App {
         heading(
             ui,
             "Games",
-            "Show the crosshair only while one of these is the focused window.",
+            "Show the crosshair only in the games you choose.",
         );
         // Games added by typing their exe name get a proper name and icon once they've been seen
         // running.
@@ -1110,7 +1287,7 @@ impl App {
                 check(
                     ui,
                     &mut s.only_games,
-                    RichText::new("Only show in my games").strong(),
+                    RichText::new("Only show in my games").semi(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if s.only_games {
@@ -1185,7 +1362,12 @@ impl App {
 
         card(ui, "My games", |ui| {
             if s.games.is_empty() {
-                ui.label(RichText::new("No games yet. Add one below.").color(pal().muted));
+                empty_state(
+                    ui,
+                    icon::GAME_CONTROLLER,
+                    "No games yet",
+                    "Add one below and the crosshair will only show while you're playing it.",
+                );
             }
             let mut remove = None;
             egui::Grid::new("games")
@@ -1208,7 +1390,7 @@ impl App {
                             ui.set_min_width(170.0);
                             app_icon(ui, info, 24.0);
                             let full = if g.path.is_empty() { &g.exe } else { &g.path };
-                            ui.label(RichText::new(name).strong()).on_hover_text(full);
+                            ui.label(RichText::new(name).semi()).on_hover_text(full);
                         });
                         let c = s.presets.get(&g.preset).unwrap_or(&s.crosshair);
                         let t =
@@ -1232,11 +1414,24 @@ impl App {
                                     ui.selectable_value(&mut g.preset, name.clone(), name);
                                 }
                             });
-                        check(ui, &mut g.windowed, "Windowed").on_hover_text(
+                        let windowed = check(ui, &mut g.windowed, "Windowed").on_hover_text(
                             "Only for games you play in a window: centres the crosshair on the \
                              game's window instead of the middle of the screen.",
                         );
-                        if ghost(ui, icon::X).on_hover_text("Remove").clicked() {
+                        // Three rows all say "Windowed", so say which game each belongs to.
+                        let (on, label) = (g.windowed, format!("Windowed: {name}"));
+                        windowed.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::Checkbox,
+                                true,
+                                on,
+                                label.clone(),
+                            )
+                        });
+                        if name_it(ghost(ui, icon::X), format!("Remove {name}"))
+                            .on_hover_text("Remove")
+                            .clicked()
+                        {
                             remove = Some(i);
                         }
                         ui.end_row();
@@ -1352,7 +1547,7 @@ impl App {
                 }
             });
             ui.label(
-                RichText::new("Start the game first, then hit Refresh to see it in the list.")
+                RichText::new("Open the game first, then press Refresh to find it.")
                     .small()
                     .color(pal().muted),
             );
@@ -1403,7 +1598,12 @@ impl App {
         let mut delete = None;
         card(ui, "Saved", |ui| {
             if self.local.presets.is_empty() {
-                ui.label(RichText::new("Nothing saved yet.").color(pal().muted));
+                empty_state(
+                    ui,
+                    icon::BOOKMARKS_SIMPLE,
+                    "Nothing saved yet",
+                    "Save the crosshair above to keep it, and give each game its own.",
+                );
             }
             egui::Grid::new("presets")
                 .num_columns(4)
@@ -1414,7 +1614,7 @@ impl App {
                         thumb(ui, &t, 56.0);
                         ui.vertical(|ui| {
                             ui.set_min_width(180.0); // grid cells start narrow; don't wrap names
-                            ui.label(RichText::new(name).strong());
+                            ui.label(RichText::new(name).semi());
                             let kind = match c.mode {
                                 Mode::Lines => "Lines".to_string(),
                                 Mode::Pixels => format!("Pixel {0}×{0}", c.grid),
@@ -1428,7 +1628,9 @@ impl App {
                                 RichText::new(format!("{}  In use", icon::CHECK))
                                     .color(pal().green.1),
                             );
-                        } else if primary(ui, true, "Load").clicked() {
+                        } else if name_it(primary(ui, true, "Load"), format!("Load {name}"))
+                            .clicked()
+                        {
                             load = Some(name.clone());
                         }
                         let armed = self.confirm_delete.as_ref() == Some(name);
@@ -1439,13 +1641,21 @@ impl App {
                         };
                         let colour = if armed { pal().danger } else { pal().muted };
                         let btn = egui::Button::new(RichText::new(text).color(colour))
-                            .fill(Color32::TRANSPARENT);
+                            .frame_when_inactive(false);
                         let hover = if armed {
                             "Click again to delete"
                         } else {
                             "Delete"
                         };
-                        if ui.add(btn).on_hover_text(hover).clicked() {
+                        let r = name_it(
+                            ui.add(btn),
+                            if armed {
+                                format!("Confirm delete {name}")
+                            } else {
+                                format!("Delete {name}")
+                            },
+                        );
+                        if r.on_hover_text(hover).clicked() {
                             if armed {
                                 delete = Some(name.clone());
                             } else {
@@ -1469,6 +1679,10 @@ impl App {
                     g.preset.clear();
                 }
             }
+            // "Switch to <deleted preset> while aiming" would point at nothing.
+            if self.local.aim == Aim::Preset(n) {
+                self.local.aim = Aim::Keep;
+            }
         }
     }
 
@@ -1491,14 +1705,7 @@ impl App {
                     (Theme::Dark, icon::MOON, "Dark"),
                 ] {
                     let on = self.local.theme == t;
-                    let btn = egui::Button::new(
-                        RichText::new(format!("{ic}  {name}"))
-                            .color(if on { pal().bg } else { pal().muted })
-                            .strong(),
-                    )
-                    .fill(if on { pal().text } else { pal().field })
-                    .min_size(vec2(110.0, 34.0));
-                    if ui.add(btn).clicked() {
+                    if segment(ui, format!("{ic}  {name}"), on, vec2(110.0, 34.0)).clicked() {
                         self.local.theme = t;
                     }
                 }
@@ -1518,7 +1725,7 @@ impl App {
                         .into_iter()
                         .enumerate()
                     {
-                        ui.label(label);
+                        let action = ui.label(label);
                         let hk = [self.local.toggle_key, self.local.menu_key][i];
                         let listening = self.listening == Some(i);
                         let text = if listening {
@@ -1526,10 +1733,17 @@ impl App {
                         } else {
                             overlay::key_name(hk)
                         };
-                        if keycap(ui, &text, listening).clicked() {
+                        // "Toggle crosshair, F8" rather than a button that only says "F8".
+                        if keycap(ui, &text, listening)
+                            .labelled_by(action.id)
+                            .clicked()
+                        {
                             self.listening = Some(i);
                         }
-                        if ghost(ui, icon::X).on_hover_text("Unbind").clicked() {
+                        if name_it(ghost(ui, icon::X), format!("Unbind {label}"))
+                            .on_hover_text("Unbind")
+                            .clicked()
+                        {
                             *[&mut self.local.toggle_key, &mut self.local.menu_key][i] =
                                 Default::default();
                         }
@@ -1563,7 +1777,7 @@ impl App {
                 if check(
                     ui,
                     &mut self.autostart,
-                    RichText::new("Start with Windows").strong(),
+                    RichText::new("Start with Windows").semi(),
                 )
                 .changed()
                 {
@@ -1593,7 +1807,7 @@ impl App {
                 check(
                     ui,
                     &mut self.local.auto_update,
-                    RichText::new("Install updates automatically").strong(),
+                    RichText::new("Install updates automatically").semi(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
@@ -1630,17 +1844,35 @@ impl App {
                     .color(pal().muted),
             );
         });
+        card(ui, "About", |ui| {
+            let repo = env!("CARGO_PKG_REPOSITORY");
+            ui.label(
+                RichText::new("Free and open source, under the MIT license.")
+                    .small()
+                    .color(pal().muted),
+            );
+            ui.horizontal(|ui| {
+                if ghost(ui, &format!("{}  Source on GitHub", icon::GITHUB_LOGO)).clicked() {
+                    install::open_url(repo);
+                }
+                if ghost(ui, &format!("{}  Report a problem", icon::BUG)).clicked() {
+                    install::open_url(&format!("{repo}/issues/new"));
+                }
+            });
+        });
     }
 }
 
 fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
     card(ui, "Colour", |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Fill").color(pal().muted));
-            ui.color_edit_button_srgba_unmultiplied(&mut c.color);
+            let fill = ui.label(RichText::new("Fill").color(pal().muted));
+            ui.color_edit_button_srgba_unmultiplied(&mut c.color)
+                .labelled_by(fill.id);
             ui.add_space(20.0);
-            ui.label(RichText::new("Outline").color(pal().muted));
-            ui.color_edit_button_srgba_unmultiplied(&mut c.outline_color);
+            let outline = ui.label(RichText::new("Outline").color(pal().muted));
+            ui.color_edit_button_srgba_unmultiplied(&mut c.outline_color)
+                .labelled_by(outline.id);
         });
     });
     card(ui, "Lines", |ui| {
@@ -1665,18 +1897,12 @@ fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
                 row(ui, "", |ui| {
                     check(ui, &mut c.dot, "Centre dot");
                 });
-                row(ui, "Dot size", |ui| {
-                    ui.add_enabled(c.dot, Slider::new(&mut c.dot_size, 1..=20));
-                });
+                slider_when(ui, c.dot, "Dot size", &mut c.dot_size, 1..=20);
                 row(ui, "", |ui| {
                     check(ui, &mut c.circle, "Circle");
                 });
-                row(ui, "Radius", |ui| {
-                    ui.add_enabled(c.circle, Slider::new(&mut c.circle_radius, 1..=100));
-                });
-                row(ui, "Ring", |ui| {
-                    ui.add_enabled(c.circle, Slider::new(&mut c.circle_thickness, 1..=10));
-                });
+                slider_when(ui, c.circle, "Radius", &mut c.circle_radius, 1..=100);
+                slider_when(ui, c.circle, "Ring", &mut c.circle_thickness, 1..=10);
             });
     });
 }

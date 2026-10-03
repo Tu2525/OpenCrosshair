@@ -14,7 +14,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::*;
 use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::*;
-use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+use windows::Win32::UI::Shell::{IShellLinkW, ShellExecuteW, ShellLink};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{HSTRING, Interface, PCWSTR, w};
 
@@ -50,6 +50,20 @@ impl Drop for Instance {
             let _ = ReleaseMutex(self.0);
             let _ = CloseHandle(self.0);
         }
+    }
+}
+
+/// Open a web page in the default browser.
+pub fn open_url(url: &str) {
+    unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            &HSTRING::from(url),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        );
     }
 }
 

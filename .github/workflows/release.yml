@@ -1,0 +1,42 @@
+# Push a tag like v0.2.0 and this builds the exe and publishes a GitHub release.
+# Installed copies pick the release up on their next update check.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The app compares its own version to the release tag. If they disagreed, every
+      # install would "update" to the same build forever, so refuse to publish.
+      - name: Tag matches Cargo.toml
+        shell: bash
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag is $GITHUB_REF_NAME but Cargo.toml says $version"
+            exit 1
+          fi
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo test --release
+      - run: cargo build --release
+
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp target/release/OpenCrosshair.exe OpenCrosshair.exe
+          cp target/release/OpenCrosshair.exe OpenCrosshair-Setup.exe
+          gh release create "$GITHUB_REF_NAME" OpenCrosshair-Setup.exe OpenCrosshair.exe \
+            --title "OpenCrosshair $GITHUB_REF_NAME" --generate-notes

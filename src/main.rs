@@ -4,6 +4,7 @@ mod apps;
 mod config;
 mod install;
 mod overlay;
+mod picture;
 mod render;
 mod ui;
 mod update;

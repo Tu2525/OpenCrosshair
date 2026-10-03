@@ -1,15 +1,57 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const MAX_GRID: u32 = 64;
 pub const MAX_SCALE: u32 = 8;
+pub const MAX_IMAGE: u32 = 512;
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum Mode {
     #[default]
     Lines,
     Pixels,
+    Image,
+}
+
+/// What happens to the crosshair while you aim down sights.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
+pub enum Aim {
+    #[default]
+    Keep,
+    Hide,
+    Preset(String),
+}
+
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub enum AimButton {
+    #[default]
+    Right,
+    Middle,
+    Back,
+    Forward,
+}
+
+impl AimButton {
+    pub const ALL: [AimButton; 4] = [Self::Right, Self::Middle, Self::Back, Self::Forward];
+
+    pub fn vk(self) -> i32 {
+        match self {
+            Self::Right => 0x02,
+            Self::Middle => 0x04,
+            Self::Back => 0x05,
+            Self::Forward => 0x06,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Right => "Right mouse button",
+            Self::Middle => "Middle mouse button",
+            Self::Back => "Mouse back button",
+            Self::Forward => "Mouse forward button",
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -33,6 +75,10 @@ pub struct Crosshair {
     pub grid: u32,
     pub scale: u32,
     pub pixels: Vec<[u8; 4]>,
+    // Image mode: a picture copied into images_dir(), scaled so its longer side is image_size
+    pub image: String,
+    pub image_size: u32,
+    pub image_opacity: u32, // percent
     pub offset_x: i32,
     pub offset_y: i32,
 }
@@ -56,6 +102,9 @@ impl Default for Crosshair {
             grid: 30,
             scale: 1,
             pixels: vec![[0; 4]; 30 * 30],
+            image: String::new(),
+            image_size: 48,
+            image_opacity: 100,
             offset_x: 0,
             offset_y: 0,
         }
@@ -103,6 +152,13 @@ impl Crosshair {
         ] {
             *v = (*v).min(50);
         }
+        self.image_size = self.image_size.clamp(4, MAX_IMAGE);
+        self.image_opacity = self.image_opacity.clamp(5, 100);
+        // Only ever a file name inside our images folder, never a path somewhere else.
+        self.image = Path::new(&self.image)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
     }
 }
 
@@ -124,6 +180,9 @@ pub struct Settings {
     pub only_games: bool,
     pub games: Vec<Game>,
     pub auto_update: bool,
+    pub aim: Aim,
+    pub aim_button: AimButton,
+    pub aim_toggle: bool, // press once to aim, again to stop (games with toggle ADS)
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -146,6 +205,9 @@ impl Default for Settings {
             only_games: false,
             games: Vec::new(),
             auto_update: true,
+            aim: Aim::Keep,
+            aim_button: AimButton::Right,
+            aim_toggle: false,
         }
     }
 }
@@ -159,6 +221,32 @@ fn dir(name: &str) -> PathBuf {
 
 fn path() -> PathBuf {
     dir("OpenCrosshair").join("settings.json")
+}
+
+/// Where imported crosshair images live.
+pub fn images_dir() -> PathBuf {
+    dir("OpenCrosshair").join("images")
+}
+
+/// Copy a picture into our own folder, so the crosshair keeps working if the original is moved
+/// or deleted. It's named after its contents, so importing the same file twice keeps one copy.
+pub fn import_image(src: &Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(src)?;
+    if bytes.len() > 20 << 20 {
+        return Err(std::io::Error::other("that file is over 20 MB"));
+    }
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
+        (h ^ b as u64).wrapping_mul(0x100_0000_01b3) // FNV-1a
+    });
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let name = format!("{hash:016x}.{ext}");
+    std::fs::create_dir_all(images_dir())?;
+    std::fs::write(images_dir().join(&name), bytes)?;
+    Ok(name)
 }
 
 impl Settings {

@@ -13,7 +13,11 @@ before using any overlay in competitive play.
 
 - **Line crosshairs** with length, thickness, gap, outline, T-style, centre dot and circle.
 - **Pixel canvas** up to 64×64 for anything the sliders can't do, with mirrored painting and undo.
+- **Your own images**: pick a picture or drop one on the window (PNG, JPEG, BMP, GIF, ICO, TIFF, WebP),
+  then set its size and opacity. It's copied into the app's folder, so moving the original doesn't break it.
 - **Presets**, and a different preset for each game.
+- **While aiming**: hide the crosshair or switch to another preset while you hold (or toggle) a mouse
+  button, for games with aim down sights.
 - **Games only mode**: the crosshair shows while one of your games is focused and hides everywhere else.
   Games are listed by their real name and icon, read from the game's own exe.
 - **Lives in the tray**, out of your way and out of Alt+Tab. Click the icon for the settings.
@@ -25,9 +29,9 @@ before using any overlay in competitive play.
 
 ![Pixel canvas, with the live preview beside it on a wide window](docs/canvas.png)
 
-| Games | Presets | Settings |
-| --- | --- | --- |
-| ![Games page](docs/games.png) | ![Presets page](docs/presets.png) | ![Settings page](docs/settings.png) |
+| Image | Games | Presets | Settings |
+| --- | --- | --- | --- |
+| ![Image page](docs/image.png) | ![Games page](docs/games.png) | ![Presets page](docs/presets.png) | ![Settings page](docs/settings.png) |
 
 ## How it compares
 
@@ -39,11 +43,11 @@ going by each project's own store page or README in October 2026. A dash means t
 | Price | Free | Paid | Paid | Free | Free | Free |
 | Source code | Open (MIT) | Not published | Not published | Not published | Source-available (FSL-1.1-MIT) | Open (GPL-3.0) |
 | Built with | Rust, native Win32 | – | – | Electron | Electron | Rust |
-| Exclusive fullscreen | No | Yes, through Xbox Game Bar | Yes, through hooks or Game Bar | Yes, through a Game Bar extension | No | No |
+| Exclusive fullscreen | No (see below) | Yes, through Xbox Game Bar | Yes, through hooks or Game Bar | Yes, through a Game Bar extension | No | No |
 | Designer | Lines, 64×64 pixel canvas | Yes, with animations | Generator and image editor | Cross, circle, pixels | 530+ built-in | Built-in, scalable |
-| Import images | No | Yes | Yes | Yes | Yes | Yes |
+| Import images | Yes | Yes | Yes | Yes | Yes | Yes |
 | Crosshair per game | Yes, automatic | Yes | – | Yes | – | – |
-| Hide or swap when aiming | No | Yes | – | Yes | Yes | – |
+| Hide or swap when aiming | Yes | Yes | – | Yes | Yes | – |
 | Community library | No | Steam Workshop | Steam Workshop | Steam Workshop | – | – |
 | Platforms | Windows | Windows | Windows | Windows | Windows, macOS, Linux | Windows |
 
@@ -60,9 +64,9 @@ going by each project's own store page or README in October 2026. A dash means t
 
 **What it doesn't do (yet)**
 
-- Exclusive fullscreen. Use borderless or windowed mode; the others get there through Game Bar or hooks.
-- Importing PNG images. The pixel canvas covers most of it, but not photos of real reticles.
-- Hiding or swapping the crosshair while you aim down sights.
+- **True exclusive fullscreen.** Nothing can draw over it without hooking into the game or going through
+  Xbox Game Bar, and Game Bar widgets have to be written in C# or C++ and published through the
+  Microsoft Store. Most games don't need it, though: see [Fullscreen](#fullscreen) below.
 - A shared library of crosshairs from other players.
 - macOS and Linux.
 
@@ -83,8 +87,24 @@ If you'd rather not install anything, download `OpenCrosshair.exe` instead and r
 The exe isn't code-signed yet, so Windows SmartScreen may warn you the first time. Click
 **More info**, then **Run anyway**.
 
-Games need to run in **borderless** or **windowed** mode. Exclusive fullscreen takes over the display
-and nothing can draw on top of it without hooking into the game, which this deliberately doesn't do.
+## Fullscreen
+
+OpenCrosshair draws a window on top of the game, so the game has to let other windows sit above it.
+
+- **Borderless and windowed** always work.
+- **"Fullscreen" in most modern games** works too. Since Windows 10, DirectX 11 and 12 games that ask for
+  fullscreen usually get Windows' *fullscreen optimizations*, which behave like borderless underneath.
+- **True exclusive fullscreen** takes over the display, and nothing can draw above it without hooking
+  into the game, which this deliberately doesn't do. That happens when *Disable fullscreen
+  optimizations* is ticked for the game's exe, and some older games can still end up there.
+
+OpenCrosshair checks the second case for you. If one of your games has that box ticked, the Games page
+says so and has a **Turn them back on** button. That only changes your own account, needs no admin
+rights, and leaves any other compatibility settings on the exe alone. The sidebar also shows
+**Fullscreen** while Windows reports a game running Direct3D fullscreen, as a hint to check this if you
+can't see the crosshair.
+
+If a game still hides it, use borderless mode.
 
 ## Using it
 
@@ -104,6 +124,13 @@ Focus changes come from an out-of-context `SetWinEventHook`, so there's no polli
 into other processes. When the focused app is one of your games, the crosshair moves to the middle of
 the monitor that game is on, or to the middle of the game's window for games marked as windowed.
 
+"While aiming" only checks the mouse button (about 60 times a second, with `GetAsyncKeyState`) while one
+of your games is in front and an aiming action is set. It reads the button's state; it never installs an
+input hook.
+
+Pictures are decoded by the Windows Imaging Component that ships with Windows, so there's no image
+library in the exe either.
+
 The settings window uses [egui](https://github.com/emilk/egui). With it open the app uses about 30 MB,
 mostly the window's OpenGL context and fonts. When it's hidden those pages sit untouched, so the app
 hands them back to Windows and drops to about 4 MB until you open the window again.
@@ -122,9 +149,10 @@ it installs itself instead of starting up.
 | File | What's in it |
 | --- | --- |
 | `src/render.rs` | Turns crosshair settings into pixels |
-| `src/overlay.rs` | The overlay window, tray icon, hotkeys and focus tracking |
+| `src/overlay.rs` | The overlay window, tray icon, hotkeys, focus and aiming |
 | `src/ui.rs` | Settings window |
-| `src/apps.rs` | Which app is in front, and its name and icon |
+| `src/apps.rs` | Which app is in front, its name and icon, its fullscreen setting |
+| `src/picture.rs` | Loading images, and the file picker |
 | `src/config.rs` | Settings and presets, saved as JSON |
 | `src/update.rs` | Self-updater |
 | `src/install.rs` | Installer, uninstaller, start with Windows, single instance |

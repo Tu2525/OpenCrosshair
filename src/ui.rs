@@ -1,6 +1,8 @@
-use crate::config::{Crosshair, Game, MAX_GRID, MAX_SCALE, Mode, Settings};
+use crate::config::{
+    self, Aim, AimButton, Crosshair, Game, MAX_GRID, MAX_IMAGE, MAX_SCALE, Mode, Settings,
+};
 use crate::overlay::{self, KEY_OK, Status, VISIBLE};
-use crate::{apps, install, render, update};
+use crate::{apps, install, picture, render, update};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, RichText, Sense, Slider,
     Stroke, StrokeKind, TextureHandle, pos2, vec2,
@@ -87,6 +89,7 @@ pub fn run(
                 last_cell: None,
                 undo: Vec::new(),
                 confirm_delete: None,
+                image_error: None,
                 dirty: false,
             }))
         }),
@@ -167,6 +170,8 @@ struct App {
     undo: Vec<(u32, Vec<[u8; 4]>)>,
     /// Preset whose delete button was clicked once; a second click deletes it.
     confirm_delete: Option<String>,
+    /// Why the last picture couldn't be used, shown on the Image card.
+    image_error: Option<String>,
     dirty: bool,
 }
 
@@ -193,6 +198,13 @@ impl eframe::App for App {
             ui.ctx().request_repaint_after(Duration::from_millis(500));
         }
         let before = self.local.clone();
+        // Drop a picture anywhere on the window to use it as the crosshair.
+        let dropped = ui
+            .ctx()
+            .input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));
+        if let Some(path) = dropped {
+            self.use_image(&path);
+        }
 
         egui::Panel::left("nav")
             .exact_size(210.0)
@@ -457,6 +469,7 @@ fn thumb(ui: &mut egui::Ui, t: &Tex, size: f32) {
 struct AppInfo {
     name: String,
     icon: Option<TextureHandle>,
+    fso: apps::Fso,
 }
 
 /// Name and icon for an app, read from its exe once and then cached. Keyed by path, or by the
@@ -477,6 +490,11 @@ fn app_info<'a>(
                 let image = egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
                 ctx.load_texture(format!("icon:{key}"), image, egui::TextureOptions::LINEAR)
             }),
+        fso: if path.is_empty() {
+            apps::Fso::On
+        } else {
+            apps::fullscreen_optimizations(path)
+        },
     })
 }
 
@@ -526,16 +544,18 @@ impl App {
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             let toggle = overlay::key_name(self.local.toggle_key);
+            let game_name = |exe: &str| {
+                let game = self.local.games.iter().find(|g| g.exe == exe);
+                let name = game.map(|g| g.name.clone()).filter(|n| !n.is_empty());
+                name.unwrap_or_else(|| apps::display_name(exe, "", ""))
+            };
             let (badge_text, tone, detail) = match overlay::STATUS.lock().unwrap().clone() {
-                Status::InGame(exe) => {
-                    let game = self.local.games.iter().find(|g| g.exe == exe);
-                    let name = game.map(|g| g.name.clone()).filter(|n| !n.is_empty());
-                    (
-                        "In game",
-                        GREEN,
-                        name.unwrap_or_else(|| apps::display_name(&exe, "", "")),
-                    )
-                }
+                Status::InGame(exe) => ("In game", GREEN, game_name(&exe)),
+                Status::Fullscreen(exe) => (
+                    "Fullscreen",
+                    YELLOW,
+                    format!("{}: if you can't see it, use borderless", game_name(&exe)),
+                ),
                 Status::Waiting => ("Waiting", YELLOW, "No game in focus".to_string()),
                 Status::Hidden => ("Hidden", GRAY, format!("{toggle} shows it again")),
                 Status::Everywhere => ("Everywhere", BLUE, "On top of all apps".to_string()),
@@ -587,6 +607,7 @@ impl App {
             for (m, ic, name) in [
                 (Mode::Lines, icon::CROSSHAIR_SIMPLE, "Lines"),
                 (Mode::Pixels, icon::PAINT_BRUSH, "Pixel canvas"),
+                (Mode::Image, icon::IMAGE, "Image"),
             ] {
                 let on = c.mode == m;
                 let btn = egui::Button::new(
@@ -595,7 +616,7 @@ impl App {
                         .strong(),
                 )
                 .fill(if on { TEXT } else { FIELD })
-                .min_size(vec2(150.0, 34.0));
+                .min_size(vec2(130.0, 34.0));
                 if ui.add(btn).clicked() {
                     c.mode = m;
                 }
@@ -606,6 +627,7 @@ impl App {
         match c.mode {
             Mode::Lines => lines_ui(ui, c),
             Mode::Pixels => self.pixels_ui(ui),
+            Mode::Image => self.image_ui(ui),
         }
 
         let c = &mut self.local.crosshair;
@@ -667,6 +689,68 @@ impl App {
             Color32::from_rgb(90, 88, 84),
         );
         ui.add_space(16.0);
+    }
+
+    fn image_ui(&mut self, ui: &mut egui::Ui) {
+        let mut choose = false;
+        let c = &mut self.local.crosshair;
+        card(ui, "Image", |ui| {
+            ui.horizontal(|ui| {
+                choose =
+                    primary(ui, true, &format!("{}  Choose image…", icon::FOLDER_OPEN)).clicked();
+                let current = if c.image.is_empty() {
+                    "No image yet".to_string()
+                } else {
+                    "Imported".to_string()
+                };
+                ui.label(RichText::new(current).color(MUTED));
+            });
+            ui.label(
+                RichText::new("Or drop a picture onto this window. PNG with a transparent background works best.")
+                    .small()
+                    .color(MUTED),
+            );
+            if let Some(e) = &self.image_error {
+                ui.label(
+                    RichText::new(format!("{}  {e}", icon::WARNING))
+                        .small()
+                        .color(YELLOW.1),
+                );
+            }
+            ui.add_space(4.0);
+            egui::Grid::new("image_opts")
+                .num_columns(2)
+                .spacing([20.0, 10.0])
+                .show(ui, |ui| {
+                    row(ui, "Size", |ui| {
+                        ui.add(Slider::new(&mut c.image_size, 4..=MAX_IMAGE).suffix(" px"));
+                    });
+                    row(ui, "Opacity", |ui| {
+                        ui.add(Slider::new(&mut c.image_opacity, 5..=100).suffix("%"));
+                    });
+                });
+        });
+        if choose && let Some(path) = picture::pick(overlay::settings_window()) {
+            self.use_image(&path);
+        }
+    }
+
+    /// Import a picture (from the dialog or dropped on the window) and switch to it.
+    fn use_image(&mut self, path: &std::path::Path) {
+        if picture::load(path, 16).is_none() {
+            self.image_error = Some("That file isn't a picture Windows can open.".into());
+            return;
+        }
+        match config::import_image(path) {
+            Ok(name) => {
+                let c = &mut self.local.crosshair;
+                c.mode = Mode::Image;
+                c.image = name;
+                self.page = Page::Crosshair;
+                self.image_error = None;
+            }
+            Err(e) => self.image_error = Some(format!("Couldn't import it: {e}")),
+        }
     }
 
     fn pixels_ui(&mut self, ui: &mut egui::Ui) {
@@ -898,6 +982,60 @@ impl App {
             ui.label(RichText::new(hint).small().color(MUTED));
         });
 
+        card(ui, "While aiming", |ui| {
+            let names: Vec<String> = s.presets.keys().cloned().collect();
+            let shown = match &s.aim {
+                Aim::Keep => "Keep the crosshair".to_string(),
+                Aim::Hide => "Hide it".to_string(),
+                Aim::Preset(name) => format!("Switch to {name}"),
+            };
+            egui::Grid::new("aim")
+                .num_columns(2)
+                .spacing([20.0, 10.0])
+                .show(ui, |ui| {
+                    row(ui, "When you aim", |ui| {
+                        egui::ComboBox::from_id_salt("aim_action")
+                            .selected_text(shown)
+                            .width(220.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut s.aim, Aim::Keep, "Keep the crosshair");
+                                ui.selectable_value(&mut s.aim, Aim::Hide, "Hide it");
+                                for name in &names {
+                                    let label = format!("Switch to {name}");
+                                    ui.selectable_value(
+                                        &mut s.aim,
+                                        Aim::Preset(name.clone()),
+                                        label,
+                                    );
+                                }
+                            });
+                    });
+                    row(ui, "Aim button", |ui| {
+                        egui::ComboBox::from_id_salt("aim_button")
+                            .selected_text(s.aim_button.label())
+                            .width(220.0)
+                            .show_ui(ui, |ui| {
+                                for b in AimButton::ALL {
+                                    ui.selectable_value(&mut s.aim_button, b, b.label());
+                                }
+                            });
+                    });
+                    row(ui, "", |ui| {
+                        ui.checkbox(
+                            &mut s.aim_toggle,
+                            "Toggle: press once to aim, again to stop",
+                        );
+                    });
+                });
+            ui.label(
+                RichText::new(
+                    "For games where you aim down sights. It reads the button's state, with no input hooks.",
+                )
+                .small()
+                .color(MUTED),
+            );
+        });
+
         card(ui, "My games", |ui| {
             if s.games.is_empty() {
                 ui.label(RichText::new("No games yet. Add one below.").color(MUTED));
@@ -959,6 +1097,44 @@ impl App {
                 });
             if let Some(i) = remove {
                 s.games.remove(i);
+            }
+            // Fullscreen optimizations switched off means true exclusive fullscreen, where no
+            // overlay can show. Say so, and fix it when it's our account's setting.
+            for g in s.games.iter().filter(|g| !g.path.is_empty()) {
+                let Some(info) = self.apps.get_mut(&g.path) else {
+                    continue;
+                };
+                if info.fso == apps::Fso::On {
+                    continue;
+                }
+                let name = if g.name.is_empty() {
+                    &info.name
+                } else {
+                    &g.name
+                };
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!(
+                        "{}  {name} has fullscreen optimizations turned off, so in fullscreen nothing can draw over it.",
+                        icon::WARNING
+                    ))
+                    .small()
+                    .color(YELLOW.1),
+                );
+                if info.fso == apps::Fso::OffForEveryone {
+                    ui.label(
+                        RichText::new(
+                            "It's set for every account. Untick \"Disable fullscreen optimizations\" \
+                             in the game's Properties > Compatibility tab (needs admin), or play borderless.",
+                        )
+                        .small()
+                        .color(MUTED),
+                    );
+                } else if ghost(ui, &format!("{}  Turn them back on", icon::WRENCH)).clicked()
+                    && apps::enable_fullscreen_optimizations(&g.path)
+                {
+                    info.fso = apps::Fso::On;
+                }
             }
         });
 
@@ -1095,6 +1271,7 @@ impl App {
                             let kind = match c.mode {
                                 Mode::Lines => "Lines".to_string(),
                                 Mode::Pixels => format!("Pixel {0}×{0}", c.grid),
+                                Mode::Image => "Image".to_string(),
                             };
                             ui.label(RichText::new(kind).small().color(MUTED));
                         });

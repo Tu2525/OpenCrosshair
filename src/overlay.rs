@@ -2,7 +2,7 @@
 //! into games. It only redraws when something changes, so it costs nothing while you play.
 
 use crate::apps;
-use crate::config::{Crosshair, Hotkey, Settings};
+use crate::config::{Aim, Crosshair, Hotkey, Settings};
 use crate::render::{self, Image};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,7 @@ use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFY_ICON_MESSAGE, NOTIFYICONDATAW,
-    Shell_NotifyIconW,
+    QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{BOOL, PCWSTR, w};
@@ -34,6 +34,9 @@ pub enum Status {
     Hidden,
     Waiting,
     InGame(String),
+    /// In a game that Windows says is running Direct3D fullscreen. Usually that still works
+    /// (fullscreen optimizations), but true exclusive fullscreen can't be drawn over.
+    Fullscreen(String),
 }
 
 static OVERLAY: AtomicIsize = AtomicIsize::new(0);
@@ -43,6 +46,7 @@ const WM_REFRESH: u32 = WM_APP + 1;
 static TRAY: AtomicIsize = AtomicIsize::new(0);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 const WM_TRAY: u32 = WM_APP + 2;
+const AIM_TIMER: usize = 2; // the topmost timer is 1
 const HK_TOGGLE: i32 = 1;
 const HK_MENU: i32 = 2;
 // Sent between OpenCrosshair processes: a second launch asks us to show the settings,
@@ -160,7 +164,22 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
                 }
                 WM_HOTKEY if msg.wParam.0 as i32 == HK_MENU => toggle_settings(false),
                 WM_REFRESH => apply(hwnd, &settings, &mut st),
+                WM_TIMER if msg.wParam.0 == AIM_TIMER => {
+                    // Aiming is read by checking the button about 64 times a second, and only
+                    // while it matters: no input hooks, and nothing at all outside games.
+                    let down = GetAsyncKeyState(st.aim_vk) as u16 & 0x8000 != 0;
+                    let aiming = next_aim(st.aim_toggle, down, st.aim_down, st.aiming);
+                    st.aim_down = down;
+                    if aiming != st.aiming {
+                        st.aiming = aiming;
+                        apply(hwnd, &settings, &mut st);
+                    }
+                }
                 WM_TIMER => {
+                    // Games can switch to fullscreen after they've taken focus.
+                    if IN_GAME.load(Ordering::Relaxed) && d3d_fullscreen() != st.fullscreen {
+                        apply(hwnd, &settings, &mut st);
+                    }
                     let _ = SetWindowPos(
                         hwnd,
                         Some(HWND_TOPMOST),
@@ -213,6 +232,26 @@ struct State {
     drawn: Option<Crosshair>, // skip re-rendering when nothing changed
     size: (i32, i32),
     at: POINT,
+    aiming: bool,
+    aim_down: bool, // button state last time, for toggle mode
+    aim_vk: i32,
+    aim_toggle: bool,
+    polling: bool,
+    fullscreen: bool,
+}
+
+/// Hold mode: aiming while the button is down. Toggle mode: each press flips it.
+fn next_aim(toggle: bool, down: bool, was_down: bool, aiming: bool) -> bool {
+    if toggle {
+        aiming ^ (down && !was_down)
+    } else {
+        down
+    }
+}
+
+/// Windows reports a Direct3D game running fullscreen.
+fn d3d_fullscreen() -> bool {
+    unsafe { SHQueryUserNotificationState().is_ok_and(|s| s == QUNS_RUNNING_D3D_FULL_SCREEN) }
 }
 
 unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
@@ -221,21 +260,40 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
     // The settings window previews the crosshair, but only while you can actually see it.
     let ours = exe == st.own_exe && settings_visible();
     let visible = VISIBLE.load(Ordering::Relaxed);
-    let (c, keys, show, in_game, windowed) = {
+    let (c, keys, show, in_game, windowed, aim_on) = {
         let s = settings.lock().unwrap();
         let game = s.games.iter().find(|g| g.exe == exe).filter(|_| !ours);
         // While our own window is focused, preview the crosshair being edited.
-        let c = game
+        let mut c = game
             .and_then(|g| s.presets.get(&g.preset))
             .unwrap_or(&s.crosshair)
             .clone();
-        let show = visible && (!s.only_games || game.is_some() || ours);
+        let mut show = visible && (!s.only_games || game.is_some() || ours);
+        st.fullscreen = game.is_some() && d3d_fullscreen();
         *STATUS.lock().unwrap() = match game {
             _ if !visible => Status::Hidden,
+            Some(g) if st.fullscreen => Status::Fullscreen(g.exe.clone()),
             Some(g) => Status::InGame(g.exe.clone()),
             None if s.only_games => Status::Waiting,
             None => Status::Everywhere,
         };
+        // Aiming only counts while the crosshair is up somewhere it should react to it.
+        let aim_on = s.aim != Aim::Keep && show && !ours;
+        if !aim_on {
+            st.aiming = false;
+        }
+        (st.aim_vk, st.aim_toggle) = (s.aim_button.vk(), s.aim_toggle);
+        if st.aiming {
+            match &s.aim {
+                Aim::Hide => show = false,
+                Aim::Preset(name) => {
+                    if let Some(p) = s.presets.get(name) {
+                        c = p.clone();
+                    }
+                }
+                Aim::Keep => {}
+            }
+        }
         let windowed = game.is_some_and(|g| g.windowed);
         (
             c,
@@ -243,9 +301,20 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             show,
             game.is_some(),
             windowed,
+            aim_on,
         )
     };
     IN_GAME.store(in_game, Ordering::Relaxed);
+    if aim_on != st.polling {
+        unsafe {
+            if aim_on {
+                SetTimer(Some(hwnd), AIM_TIMER, 15, None);
+            } else {
+                let _ = KillTimer(Some(hwnd), AIM_TIMER);
+            }
+        }
+        st.polling = aim_on;
+    }
 
     for (i, hk) in keys.into_iter().enumerate() {
         if st.keys[i] != hk {
@@ -281,6 +350,12 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), st.at.x, st.at.y, 0, 0, flags);
         }
         let _ = ShowWindow(hwnd, if show { SW_SHOWNOACTIVATE } else { SW_HIDE });
+        if show {
+            // A game that just took focus may have put itself on top; get back above it now
+            // rather than on the next tick of the topmost timer.
+            let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+            let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+        }
     }
 }
 
@@ -381,7 +456,7 @@ unsafe fn draw(hwnd: HWND, img: &Image, pos: POINT) {
 }
 
 /// Our settings window: the top-level window in this process titled TITLE.
-fn settings_window() -> Option<HWND> {
+pub fn settings_window() -> Option<HWND> {
     unsafe extern "system" fn each(h: HWND, out: LPARAM) -> BOOL {
         unsafe {
             let mut pid = 0;
@@ -591,4 +666,21 @@ unsafe fn tray_menu(h: HWND) {
 
 unsafe extern "system" fn wndproc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     unsafe { DefWindowProcW(h, m, w, l) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_aim;
+
+    #[test]
+    fn aim_hold_and_toggle() {
+        // Hold: follows the button.
+        assert!(next_aim(false, true, false, false));
+        assert!(!next_aim(false, false, true, true));
+        // Toggle: a press flips it, holding or releasing doesn't.
+        assert!(next_aim(true, true, false, false), "press starts aiming");
+        assert!(next_aim(true, true, true, true), "still held, still aiming");
+        assert!(next_aim(true, false, true, true), "release keeps aiming");
+        assert!(!next_aim(true, true, false, true), "second press stops");
+    }
 }

@@ -8,10 +8,106 @@ use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::*;
+use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::*;
 use windows::Win32::UI::Shell::SHDefExtractIconW;
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::{BOOL, HSTRING, PWSTR};
+use windows::core::{BOOL, HSTRING, PCWSTR, PWSTR, w};
+
+// Windows keeps compatibility settings per exe here, including the "Disable fullscreen
+// optimizations" box on the exe's Properties > Compatibility tab.
+const LAYERS: PCWSTR = w!(r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers");
+const NO_FSO: &str = "DISABLEDXMAXIMIZEDWINDOWEDMODE";
+
+/// Whether a game gets fullscreen optimizations. Without them its fullscreen is true exclusive
+/// mode, which nothing can draw over short of hooking into the game.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Fso {
+    On,
+    OffForYou,      // our own account's setting: we can switch it back on
+    OffForEveryone, // set machine-wide: needs admin, so we can only point the way
+}
+
+fn layers(root: HKEY, path: &str) -> Option<String> {
+    unsafe {
+        let name = HSTRING::from(path);
+        let mut len = 0u32;
+        RegGetValueW(
+            root,
+            LAYERS,
+            &name,
+            RRF_RT_REG_SZ,
+            None,
+            None,
+            Some(&mut len),
+        )
+        .ok()
+        .ok()?;
+        let mut buf = vec![0u16; len as usize / 2];
+        let data = Some(buf.as_mut_ptr() as *mut c_void);
+        RegGetValueW(
+            root,
+            LAYERS,
+            &name,
+            RRF_RT_REG_SZ,
+            None,
+            data,
+            Some(&mut len),
+        )
+        .ok()
+        .ok()?;
+        Some(
+            String::from_utf16_lossy(&buf)
+                .trim_end_matches('\0')
+                .to_string(),
+        )
+    }
+}
+
+pub fn fullscreen_optimizations(path: &str) -> Fso {
+    let off = |root| {
+        layers(root, path)
+            .is_some_and(|v| v.split_whitespace().any(|f| f.eq_ignore_ascii_case(NO_FSO)))
+    };
+    if off(HKEY_CURRENT_USER) {
+        Fso::OffForYou
+    } else if off(HKEY_LOCAL_MACHINE) {
+        Fso::OffForEveryone
+    } else {
+        Fso::On
+    }
+}
+
+/// Untick "Disable fullscreen optimizations" for this exe, for our account only. Any other
+/// compatibility settings on it are left alone.
+pub fn enable_fullscreen_optimizations(path: &str) -> bool {
+    let Some(value) = layers(HKEY_CURRENT_USER, path) else {
+        return false;
+    };
+    let rest: Vec<&str> = value
+        .split_whitespace()
+        .filter(|f| !f.eq_ignore_ascii_case(NO_FSO))
+        .collect();
+    let name = HSTRING::from(path);
+    unsafe {
+        // A lone "~" only marks the entry as user-set; with nothing after it, drop the entry.
+        if rest.iter().all(|f| *f == "~") {
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, LAYERS, &name).is_ok()
+        } else {
+            let data: Vec<u16> = rest.join(" ").encode_utf16().chain([0]).collect();
+            let bytes = (data.len() * 2) as u32;
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                LAYERS,
+                &name,
+                REG_SZ.0,
+                Some(data.as_ptr() as _),
+                bytes,
+            )
+            .is_ok()
+        }
+    }
+}
 
 pub struct App {
     /// Lowercase file name, e.g. "cs2.exe". This is what games are matched on.
@@ -273,6 +369,58 @@ unsafe fn icon_rgba(icon: HICON) -> Option<(Vec<u8>, [usize; 2])> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn switches_fullscreen_optimizations_back_on() {
+        use super::*;
+        // A made-up exe, so the test can't touch a real game's settings.
+        let exe = r"C:\OpenCrosshair test\not-a-real-game.exe";
+        let name = HSTRING::from(exe);
+        struct Cleanup<'a>(&'a HSTRING);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, LAYERS, self.0);
+                }
+            }
+        }
+        let _cleanup = Cleanup(&name);
+        let set = |v: &str| {
+            let data: Vec<u16> = v.encode_utf16().chain([0]).collect();
+            let bytes = (data.len() * 2) as u32;
+            unsafe {
+                RegSetKeyValueW(
+                    HKEY_CURRENT_USER,
+                    LAYERS,
+                    &name,
+                    REG_SZ.0,
+                    Some(data.as_ptr() as _),
+                    bytes,
+                )
+                .ok()
+                .unwrap();
+            }
+        };
+
+        assert!(fullscreen_optimizations(exe) == Fso::On);
+        set("~ DISABLEDXMAXIMIZEDWINDOWEDMODE HIGHDPIAWARE");
+        assert!(fullscreen_optimizations(exe) == Fso::OffForYou);
+        assert!(enable_fullscreen_optimizations(exe));
+        assert!(fullscreen_optimizations(exe) == Fso::On);
+        assert_eq!(
+            layers(HKEY_CURRENT_USER, exe).as_deref(),
+            Some("~ HIGHDPIAWARE"),
+            "other settings stay"
+        );
+
+        set("~ DISABLEDXMAXIMIZEDWINDOWEDMODE");
+        assert!(enable_fullscreen_optimizations(exe));
+        assert_eq!(
+            layers(HKEY_CURRENT_USER, exe),
+            None,
+            "an entry with nothing left is removed"
+        );
+    }
+
     #[test]
     fn names_and_icons_from_windows() {
         // explorer.exe ships with every copy of Windows, so it makes a stable example.

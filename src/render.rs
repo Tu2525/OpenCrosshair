@@ -1,4 +1,4 @@
-use crate::config::{Crosshair, Mode};
+use crate::config::{self, Crosshair, Mode};
 
 /// Premultiplied BGRA pixels (u32 = 0xAARRGGBB), top-down.
 pub struct Image {
@@ -15,7 +15,30 @@ pub fn render(c: &Crosshair) -> Image {
     match c.mode {
         Mode::Lines => lines(c),
         Mode::Pixels => pixels(c),
+        Mode::Image => image(c),
     }
+}
+
+/// A picture the user imported. Nothing to draw if it's missing or won't decode.
+fn image(c: &Crosshair) -> Image {
+    let path = config::images_dir().join(&c.image);
+    let loaded = (!c.image.is_empty())
+        .then(|| crate::picture::load(&path, c.image_size))
+        .flatten();
+    let mut img = loaded.unwrap_or(Image {
+        w: 1,
+        h: 1,
+        px: vec![0],
+        centre: 0.5,
+    });
+    if c.image_opacity < 100 {
+        // Premultiplied, so fading is just scaling every channel.
+        let k = c.image_opacity as f32 / 100.0;
+        for p in &mut img.px {
+            *p = u32::from_le_bytes(p.to_le_bytes().map(|v| (v as f32 * k).round() as u8));
+        }
+    }
+    img
 }
 
 fn pack(rgb: [f32; 3], a: f32) -> u32 {

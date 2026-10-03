@@ -1,6 +1,6 @@
 [package]
 name = "opencrosshair"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "A lightweight crosshair overlay for Windows games"
 license = "MIT"
@@ -20,6 +20,7 @@ windows = { version = "0.62.2", features = [
     "Win32_Graphics_Gdi",
     "Win32_Networking_WinHttp",
     "Win32_Security",
+    "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_LibraryLoader",

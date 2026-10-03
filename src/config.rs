@@ -130,6 +130,8 @@ pub struct Settings {
 #[serde(default)]
 pub struct Game {
     pub exe: String,    // e.g. "cs2.exe", matched case-insensitively
+    pub name: String,   // what to show, e.g. "Counter-Strike 2"; worked out when it's added
+    pub path: String,   // full path when known, for the app's icon
     pub preset: String, // preset to use in this game; empty = current crosshair
     pub windowed: bool, // centre on the game's window instead of its monitor
 }

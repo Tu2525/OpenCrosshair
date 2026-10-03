@@ -96,6 +96,10 @@ pub fn start(settings: Arc<Mutex<Settings>>) -> mpsc::Sender<()> {
                     }
                 }
             }
+            // The check pulls in the TLS stack; hand that memory back while the window is hidden.
+            if !overlay::settings_visible() {
+                overlay::trim_memory();
+            }
             manual = match rx.recv_timeout(wait) {
                 Ok(()) => true,
                 Err(RecvTimeoutError::Timeout) => false,
@@ -176,7 +180,10 @@ fn restart(exe: &Path, version: &str, settings: &Mutex<Settings>) {
         cmd.arg("--startup");
     }
     match cmd.spawn() {
-        Ok(_) => std::process::exit(0),
+        Ok(_) => {
+            overlay::remove_tray();
+            std::process::exit(0)
+        }
         Err(e) => set(Status::Failed(format!(
             "updated, but couldn't restart: {e}"
         ))),

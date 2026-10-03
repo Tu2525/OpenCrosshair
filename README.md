@@ -15,6 +15,7 @@ overlay in competitive play.
 - **Pixel canvas** up to 64×64 for anything the sliders can't do, with mirrored painting and undo.
 - **Presets**, and a different preset for each game.
 - **Games only mode**: the crosshair shows while one of your games is focused and hides everywhere else.
+  Games are listed by their real name and icon, read from the game's own exe.
 - **Rebindable global hotkeys**: F8 toggles the crosshair, F9 opens the settings.
 - **Start with Windows**, hidden until you press the hotkey.
 - **Automatic updates** from GitHub releases. It waits until you've left your game before restarting.
@@ -45,7 +46,8 @@ and nothing can draw on top of it without hooking into the game, which this deli
 
 - **F8** shows or hides the crosshair, **F9** shows or hides the settings window. Both can be changed under Settings.
 - Launching OpenCrosshair while it's already running just brings up the settings.
-- Closing the settings window quits the app. To keep the crosshair running, hide the window with F9 instead.
+- It lives in the tray. Click the icon for settings, or right-click it to toggle the crosshair or quit.
+- Closing the settings window hides it to the tray; the crosshair keeps running.
 - Settings are saved as you change them, to `%APPDATA%\OpenCrosshair\settings.json`.
 
 ## How it works

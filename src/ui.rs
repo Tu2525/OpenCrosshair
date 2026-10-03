@@ -1,6 +1,6 @@
 use crate::config::{Crosshair, Game, MAX_GRID, MAX_SCALE, Mode, Settings};
 use crate::overlay::{self, KEY_OK, Status, VISIBLE};
-use crate::{install, render, update};
+use crate::{apps, install, render, update};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, RichText, Sense, Slider,
     Stroke, StrokeKind, TextureHandle, pos2, vec2,
@@ -67,6 +67,7 @@ pub fn run(
         options,
         Box::new(|cc| {
             style(&cc.egui_ctx);
+            overlay::adopt_settings_window();
             Ok(Box::new(App {
                 shared,
                 local,
@@ -77,7 +78,8 @@ pub fn run(
                 mirror_y: true,
                 preset_name: String::new(),
                 game_input: String::new(),
-                running: overlay::running_apps(),
+                running: apps::running(),
+                apps: HashMap::new(),
                 textures: HashMap::new(),
                 autostart: install::autostart(),
                 updates,
@@ -151,9 +153,11 @@ struct App {
     mirror_y: bool,
     preset_name: String,
     game_input: String,
-    running: Vec<String>,
+    running: Vec<apps::App>,
+    /// Display name and icon per app, looked up once.
+    apps: HashMap<String, AppInfo>,
     /// Rendered crosshairs for the preview and preset thumbnails, re-rendered only on change.
-    textures: HashMap<String, (TextureHandle, Crosshair)>,
+    textures: HashMap<String, (Tex, Crosshair)>,
     autostart: bool,
     updates: mpsc::Sender<()>,
     start_hidden: bool,
@@ -173,6 +177,13 @@ impl eframe::App for App {
         if std::mem::take(&mut self.start_hidden) {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        // Closing just hides the window; OpenCrosshair keeps running in the tray, and Quit lives
+        // in the tray icon's menu.
+        if ui.ctx().input(|i| i.viewport().close_requested()) {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            overlay::hide_settings();
         }
         // Status (focused game, update progress) changes outside the UI, so poll it while
         // someone can see it. Hidden or minimized, the UI doesn't run at all.
@@ -354,13 +365,20 @@ fn keycap(ui: &mut egui::Ui, text: &str, active: bool) -> egui::Response {
     )
 }
 
+/// A rendered crosshair, and where its centre is inside the texture.
+#[derive(Clone)]
+struct Tex {
+    handle: TextureHandle,
+    centre: f32, // texels; see render::Image::centre
+}
+
 /// Crosshair texture for `key`, re-rendered only when the crosshair changed.
 fn texture(
-    cache: &mut HashMap<String, (TextureHandle, Crosshair)>,
+    cache: &mut HashMap<String, (Tex, Crosshair)>,
     ctx: &egui::Context,
     key: &str,
     c: &Crosshair,
-) -> TextureHandle {
+) -> Tex {
     if let Some((t, of)) = cache.get(key)
         && of == c
     {
@@ -376,24 +394,50 @@ fn texture(
         })
         .collect();
     let ci = egui::ColorImage::from_rgba_premultiplied([img.w, img.h], &rgba);
-    let t = ctx.load_texture(key, ci, egui::TextureOptions::NEAREST);
+    let t = Tex {
+        // Sharp blocks when zoomed in; smooth when a big crosshair is shrunk into a small tile,
+        // where nearest-neighbour would drop rows unevenly and knock it off-centre.
+        handle: ctx.load_texture(
+            key,
+            ci,
+            egui::TextureOptions {
+                minification: egui::TextureFilter::Linear,
+                ..egui::TextureOptions::NEAREST
+            },
+        ),
+        centre: img.centre,
+    };
     cache.insert(key.to_string(), (t.clone(), c.clone()));
     t
 }
 
-/// Draw a texture centred at `at`, integer-zoomed to fit `max` (or shrunk if too big).
-fn draw_fit(p: &Painter, t: &TextureHandle, at: Pos2, max: f32) -> f32 {
-    let size = t.size_vec2();
-    let fit = max / size.x.max(size.y);
+/// Draw a crosshair with its own centre (not the texture's) on `at`, as big as fits in `max`
+/// points. Each texel is a whole number of screen pixels, so it stays crisp at any display scale.
+/// Returns the zoom in screen pixels per texel.
+fn draw_fit(p: &Painter, t: &Tex, at: Pos2, max: f32) -> f32 {
+    let ppp = p.ctx().pixels_per_point();
+    let size = t.handle.size_vec2();
+    let fit = max * ppp / size.x.max(size.y);
     let zoom = if fit >= 1.0 {
-        fit.floor().min(6.0)
+        fit.floor().min(8.0)
     } else {
         fit
     };
+    let scale = zoom / ppp; // points per texel
+    // Zoomed in, snap to whole screen pixels so every texel is a crisp block. Shrunk, the
+    // smoothing handles fractions, so place it exactly instead.
+    let snap = |v: f32| {
+        if zoom >= 1.0 {
+            (v * ppp).round() / ppp
+        } else {
+            v
+        }
+    };
+    let min = pos2(snap(at.x - t.centre * scale), snap(at.y - t.centre * scale));
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     p.image(
-        t.id(),
-        Rect::from_center_size(pos2(at.x.round(), at.y.round()), size * zoom),
+        t.handle.id(),
+        Rect::from_min_size(min, size * scale),
         uv,
         Color32::WHITE,
     );
@@ -401,12 +445,54 @@ fn draw_fit(p: &Painter, t: &TextureHandle, at: Pos2, max: f32) -> f32 {
 }
 
 /// Small dark tile with the crosshair in it.
-fn thumb(ui: &mut egui::Ui, t: &TextureHandle, size: f32) {
+fn thumb(ui: &mut egui::Ui, t: &Tex, size: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 6, Color32::from_rgb(10, 10, 10));
     p.rect_stroke(rect, 6, Stroke::new(1.0, BORDER), StrokeKind::Inside);
     draw_fit(&p, t, rect.center(), size - 10.0);
+}
+
+/// What the games list shows for an app.
+struct AppInfo {
+    name: String,
+    icon: Option<TextureHandle>,
+}
+
+/// Name and icon for an app, read from its exe once and then cached. Keyed by path, or by the
+/// exe name while the path isn't known yet.
+fn app_info<'a>(
+    cache: &'a mut HashMap<String, AppInfo>,
+    ctx: &egui::Context,
+    app: &apps::App,
+) -> &'a AppInfo {
+    let (exe, path) = (app.exe.as_str(), app.path.as_str());
+    let key = if path.is_empty() { exe } else { path };
+    cache.entry(key.to_string()).or_insert_with(|| AppInfo {
+        name: apps::display_name(exe, path, &app.title),
+        icon: (!path.is_empty())
+            .then(|| apps::icon(path, 48))
+            .flatten()
+            .map(|(rgba, size)| {
+                let image = egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
+                ctx.load_texture(format!("icon:{key}"), image, egui::TextureOptions::LINEAR)
+            }),
+    })
+}
+
+/// The app's own icon, or a controller when the exe doesn't have one we can read.
+fn app_icon(ui: &mut egui::Ui, info: &AppInfo, size: f32) {
+    match &info.icon {
+        Some(t) => {
+            ui.add(egui::Image::from_texture((t.id(), vec2(size, size))));
+        }
+        None => {
+            let glyph = RichText::new(icon::GAME_CONTROLLER)
+                .size(size * 0.8)
+                .color(MUTED);
+            ui.add_sized([size, size], egui::Label::new(glyph));
+        }
+    }
 }
 
 // ---------- pages ----------
@@ -441,7 +527,15 @@ impl App {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             let toggle = overlay::key_name(self.local.toggle_key);
             let (badge_text, tone, detail) = match overlay::STATUS.lock().unwrap().clone() {
-                Status::InGame(exe) => ("In game", GREEN, exe),
+                Status::InGame(exe) => {
+                    let game = self.local.games.iter().find(|g| g.exe == exe);
+                    let name = game.map(|g| g.name.clone()).filter(|n| !n.is_empty());
+                    (
+                        "In game",
+                        GREEN,
+                        name.unwrap_or_else(|| apps::display_name(&exe, "", "")),
+                    )
+                }
                 Status::Waiting => ("Waiting", YELLOW, "No game in focus".to_string()),
                 Status::Hidden => ("Hidden", GRAY, format!("{toggle} shows it again")),
                 Status::Everywhere => ("Everywhere", BLUE, "On top of all apps".to_string()),
@@ -564,7 +658,7 @@ impl App {
         for half in [dark, light] {
             zoom = draw_fit(&p, &t, half.center(), fit);
         }
-        let size = t.size_vec2();
+        let size = t.handle.size_vec2();
         p.text(
             rect.right_bottom() - vec2(12.0, 10.0),
             Align2::RIGHT_BOTTOM,
@@ -768,6 +862,18 @@ impl App {
             "Games",
             "Show the crosshair only while one of these is the focused window.",
         );
+        // Games added by typing their exe name get a proper name and icon once they've been seen
+        // running.
+        for g in &mut self.local.games {
+            if let Some(app) = self.running.iter().find(|a| a.exe == g.exe) {
+                if g.path.is_empty() {
+                    g.path = app.path.clone();
+                }
+                if g.name.is_empty() {
+                    g.name = apps::display_name(&app.exe, &app.path, &app.title);
+                }
+            }
+        }
         let s = &mut self.local;
 
         card(ui, "", |ui| {
@@ -802,13 +908,27 @@ impl App {
                 .spacing([14.0, 10.0])
                 .show(ui, |ui| {
                     for (i, g) in s.games.iter_mut().enumerate() {
+                        let app = apps::App {
+                            exe: g.exe.clone(),
+                            path: g.path.clone(),
+                            title: String::new(),
+                        };
+                        let info = app_info(&mut self.apps, ui.ctx(), &app);
+                        let name = if g.name.is_empty() {
+                            &info.name
+                        } else {
+                            &g.name
+                        };
+                        ui.horizontal(|ui| {
+                            ui.set_min_width(170.0);
+                            app_icon(ui, info, 24.0);
+                            let full = if g.path.is_empty() { &g.exe } else { &g.path };
+                            ui.label(RichText::new(name).strong()).on_hover_text(full);
+                        });
                         let c = s.presets.get(&g.preset).unwrap_or(&s.crosshair);
                         let t =
                             texture(&mut self.textures, ui.ctx(), &format!("game:{}", g.exe), c);
-                        thumb(ui, &t, 38.0);
-                        ui.label(
-                            RichText::new(format!("{}  {}", icon::GAME_CONTROLLER, g.exe)).strong(),
-                        );
+                        thumb(ui, &t, 34.0);
                         let shown = if g.preset.is_empty() {
                             "Current crosshair"
                         } else {
@@ -816,7 +936,7 @@ impl App {
                         };
                         egui::ComboBox::from_id_salt(("preset", i))
                             .selected_text(shown)
-                            .width(190.0)
+                            .width(150.0)
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
                                     &mut g.preset,
@@ -842,11 +962,19 @@ impl App {
             }
         });
 
-        let add = |games: &mut Vec<Game>, exe: &str| {
+        let add = |games: &mut Vec<Game>, exe: &str, path: &str, name: &str| {
             let exe = exe.trim().to_lowercase();
+            // "cs2" works as well as "cs2.exe".
+            let exe = if exe.is_empty() || exe.ends_with(".exe") {
+                exe
+            } else {
+                format!("{exe}.exe")
+            };
             if !exe.is_empty() && !games.iter().any(|g| g.exe == exe) {
                 games.push(Game {
                     exe,
+                    name: name.to_string(),
+                    path: path.to_string(),
                     ..Default::default()
                 });
             }
@@ -858,23 +986,33 @@ impl App {
                     .selected_text("Pick a running app…")
                     .width(260.0)
                     .show_ui(ui, |ui| {
-                        for exe in &self.running {
-                            if ui.selectable_label(false, exe).clicked() {
-                                picked = Some(exe.clone());
+                        for (i, app) in self.running.iter().enumerate() {
+                            let info = app_info(&mut self.apps, ui.ctx(), app);
+                            let btn = match &info.icon {
+                                Some(t) => egui::Button::image_and_text(
+                                    egui::Image::from_texture((t.id(), vec2(18.0, 18.0))),
+                                    info.name.as_str(),
+                                ),
+                                None => egui::Button::new(info.name.as_str()),
+                            };
+                            let btn = btn.frame_when_inactive(false).min_size(vec2(240.0, 0.0));
+                            if ui.add(btn).on_hover_text(&app.exe).clicked() {
+                                picked = Some(i);
                             }
                         }
                     });
-                if let Some(exe) = picked {
-                    add(&mut s.games, &exe);
+                if let Some(app) = picked.map(|i| &self.running[i]) {
+                    let name = app_info(&mut self.apps, ui.ctx(), app).name.clone();
+                    add(&mut s.games, &app.exe, &app.path, &name);
                 }
                 if ghost(ui, &format!("{}  Refresh", icon::ARROWS_CLOCKWISE)).clicked() {
-                    self.running = overlay::running_apps();
+                    self.running = apps::running();
                 }
             });
             ui.horizontal(|ui| {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.game_input)
-                        .hint_text("or type it, e.g. cs2.exe")
+                        .hint_text("or type its exe name, e.g. cs2")
                         .desired_width(260.0),
                 );
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -886,7 +1024,7 @@ impl App {
                 .clicked()
                     || enter
                 {
-                    add(&mut s.games, &self.game_input);
+                    add(&mut s.games, &self.game_input, "", "");
                     self.game_input.clear();
                 }
             });
@@ -1096,7 +1234,7 @@ impl App {
             let menu = overlay::key_name(self.local.menu_key);
             ui.label(
                 RichText::new(format!(
-                    "{}  Starts quietly when you log in: just the crosshair, no window. Press {menu} for settings.",
+                    "{}  Starts quietly when you log in, in the tray. Press {menu} or click the tray icon for settings.",
                     icon::ROCKET_LAUNCH
                 ))
                 .small()

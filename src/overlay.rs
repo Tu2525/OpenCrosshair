@@ -1,17 +1,21 @@
 //! The overlay: a click-through, always-on-top layered window. Plain Win32, nothing is injected
 //! into games. It only redraws when something changes, so it costs nothing while you play.
 
+use crate::apps;
 use crate::config::{Crosshair, Hotkey, Settings};
 use crate::render::{self, Image};
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::System::Diagnostics::ToolHelp::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::*;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::Shell::{
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFY_ICON_MESSAGE, NOTIFYICONDATAW,
+    Shell_NotifyIconW,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -34,6 +38,11 @@ pub enum Status {
 
 static OVERLAY: AtomicIsize = AtomicIsize::new(0);
 const WM_REFRESH: u32 = WM_APP + 1;
+// The tray icon gets its own hidden window: the overlay is click-through and can't take focus,
+// which a tray menu needs in order to close when you click elsewhere.
+static TRAY: AtomicIsize = AtomicIsize::new(0);
+static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+const WM_TRAY: u32 = WM_APP + 2;
 const HK_TOGGLE: i32 = 1;
 const HK_MENU: i32 = 2;
 // Sent between OpenCrosshair processes: a second launch asks us to show the settings,
@@ -54,6 +63,9 @@ pub fn refresh() {
 /// Tell an already running OpenCrosshair to show its settings, or to quit.
 pub fn signal_running(quit: bool) {
     unsafe {
+        // We were just launched by you, so we're allowed to bring a window to the front. Pass
+        // that on, or the running copy's window would open behind whatever you're doing.
+        let _ = AllowSetForegroundWindow(ASFW_ANY);
         let msg = RegisterWindowMessageW(if quit { MSG_QUIT } else { MSG_SHOW });
         let _ = PostMessageW(Some(HWND_BROADCAST), msg, WPARAM(0), LPARAM(0));
     }
@@ -85,6 +97,36 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
         )
         .unwrap();
         OVERLAY.store(hwnd.0 as isize, Ordering::Release);
+        let tray_class = w!("OpenCrosshairTray");
+        RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(tray_proc),
+            hInstance: inst,
+            lpszClassName: tray_class,
+            ..Default::default()
+        });
+        let style = WINDOW_EX_STYLE::default();
+        let tray = CreateWindowExW(
+            style,
+            tray_class,
+            w!(""),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            Some(inst),
+            None,
+        );
+        if let Ok(tray) = tray {
+            TRAY.store(tray.0 as isize, Ordering::Release);
+            TASKBAR_CREATED.store(
+                RegisterWindowMessageW(w!("TaskbarCreated")),
+                Ordering::Relaxed,
+            );
+            tray_icon(NIM_ADD);
+        }
         // Some games grab topmost when they gain focus; re-assert it once a second.
         SetTimer(Some(hwnd), 1, 1000, None);
         // Out-of-context WinEvent hook: Windows tells us when focus changes. No DLL, no polling.
@@ -103,7 +145,7 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
         );
 
         let mut st = State {
-            own_exe: own_exe(),
+            own_exe: apps::own_exe(),
             ..Default::default()
         };
         apply(hwnd, &settings, &mut st);
@@ -131,6 +173,7 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
                 m if m == show_msg => toggle_settings(true),
                 m if m == quit_msg => {
                     settings.lock().unwrap().save();
+                    remove_tray();
                     std::process::exit(0);
                 }
                 _ => {
@@ -165,8 +208,9 @@ struct State {
 
 unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
     let fg = unsafe { GetForegroundWindow() };
-    let exe = unsafe { exe_of(fg) };
-    let ours = exe == st.own_exe;
+    let exe = apps::of_window(fg).exe;
+    // The settings window previews the crosshair, but only while you can actually see it.
+    let ours = exe == st.own_exe && settings_visible();
     let visible = VISIBLE.load(Ordering::Relaxed);
     let (c, keys, show, in_game, windowed) = {
         let s = settings.lock().unwrap();
@@ -327,109 +371,16 @@ unsafe fn draw(hwnd: HWND, img: &Image, pos: POINT) {
     }
 }
 
-fn own_exe() -> String {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| Some(p.file_name()?.to_string_lossy().to_lowercase()))
-        .unwrap_or_default()
-}
-
-/// Lowercase exe name of the process that owns `hwnd`, or "" if unknown.
-unsafe fn exe_of(hwnd: HWND) -> String {
-    unsafe {
-        let mut pid = 0;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == 0 {
-            return String::new();
-        }
-        if let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
-            let mut buf = [0u16; 1024];
-            let mut len = buf.len() as u32;
-            let ok = QueryFullProcessImageNameW(
-                h,
-                PROCESS_NAME_WIN32,
-                windows::core::PWSTR(buf.as_mut_ptr()),
-                &mut len,
-            );
-            let _ = CloseHandle(h);
-            if ok.is_ok() {
-                let path = String::from_utf16_lossy(&buf[..len as usize]);
-                return path.rsplit('\\').next().unwrap_or("").to_lowercase();
-            }
-        }
-        // Some anti-cheats refuse even a limited handle. The process list still has the name.
-        exe_by_pid(pid)
-    }
-}
-
-unsafe fn exe_by_pid(pid: u32) -> String {
-    unsafe {
-        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
-            return String::new();
-        };
-        let mut e = PROCESSENTRY32W {
-            dwSize: size_of::<PROCESSENTRY32W>() as u32,
-            ..Default::default()
-        };
-        let mut name = String::new();
-        let mut more = Process32FirstW(snap, &mut e).is_ok();
-        while more {
-            if e.th32ProcessID == pid {
-                let n = e
-                    .szExeFile
-                    .iter()
-                    .position(|&c| c == 0)
-                    .unwrap_or(e.szExeFile.len());
-                name = String::from_utf16_lossy(&e.szExeFile[..n]).to_lowercase();
-                break;
-            }
-            more = Process32NextW(snap, &mut e).is_ok();
-        }
-        let _ = CloseHandle(snap);
-        name
-    }
-}
-
-/// Exe names of apps with a visible top-level window, for the "add game" picker.
-pub fn running_apps() -> Vec<String> {
-    unsafe extern "system" fn each(h: HWND, out: LPARAM) -> BOOL {
-        unsafe {
-            let out = &mut *(out.0 as *mut Vec<String>);
-            if IsWindowVisible(h).as_bool()
-                && GetWindowTextLengthW(h) > 0
-                && GetWindow(h, GW_OWNER).is_err()
-            {
-                let exe = exe_of(h);
-                if !exe.is_empty() && !out.contains(&exe) {
-                    out.push(exe);
-                }
-            }
-            true.into()
-        }
-    }
-    let mut out = Vec::new();
-    unsafe {
-        let _ = EnumWindows(Some(each), LPARAM(&mut out as *mut _ as isize));
-    }
-    let skip = [
-        own_exe(),
-        "explorer.exe".into(),
-        "applicationframehost.exe".into(),
-        "textinputhost.exe".into(),
-    ];
-    out.retain(|e| !skip.contains(e));
-    out.sort();
-    out
-}
-
 /// Our settings window: the top-level window in this process titled TITLE.
 fn settings_window() -> Option<HWND> {
     unsafe extern "system" fn each(h: HWND, out: LPARAM) -> BOOL {
         unsafe {
             let mut pid = 0;
             GetWindowThreadProcessId(h, Some(&mut pid));
+            // InternalGetWindowText, unlike GetWindowText, never sends the window a message.
+            // The window's thread may be busy, and waiting on it from here could hang us.
             let mut buf = [0u16; 64];
-            let n = GetWindowTextW(h, &mut buf) as usize;
+            let n = InternalGetWindowText(h, &mut buf) as usize;
             if pid == GetCurrentProcessId() && String::from_utf16_lossy(&buf[..n]) == TITLE {
                 *(out.0 as *mut HWND) = h;
                 return false.into(); // found it, stop
@@ -448,11 +399,48 @@ pub fn settings_visible() -> bool {
     settings_window().is_some_and(|h| unsafe { IsWindowVisible(h).as_bool() })
 }
 
+/// Hide the settings window. It stays alive so it comes back instantly; its memory is handed
+/// back to Windows until then.
+pub fn hide_settings() {
+    if let Some(h) = settings_window() {
+        unsafe {
+            let _ = ShowWindow(h, SW_HIDE);
+        }
+    }
+    // Hiding a window doesn't always move focus anywhere, so no focus event would come to tell
+    // the overlay the preview is over. Check now instead of on your next click.
+    refresh();
+    trim_memory();
+}
+
+/// Give the settings window an owner (our hidden tray window). Windows leaves owned windows out
+/// of Alt+Tab and the taskbar; the tray icon and the hotkey are how you get to it.
+pub fn adopt_settings_window() {
+    let tray = TRAY.load(Ordering::Acquire);
+    if let Some(h) = settings_window()
+        && tray != 0
+    {
+        unsafe {
+            SetWindowLongPtrW(h, GWLP_HWNDPARENT, tray);
+        }
+    }
+}
+
+/// Let Windows take back the RAM we aren't using right now. While the settings window is hidden
+/// most of the app (the UI, its graphics context, the fonts) sits untouched, so its pages can go.
+/// They're paged back in if the window is opened again.
+pub fn trim_memory() {
+    unsafe {
+        let _ = SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
+    }
+}
+
+/// F9, the tray icon and launching the app again all end up here.
 fn toggle_settings(force_show: bool) {
     let Some(h) = settings_window() else { return };
     unsafe {
         if !force_show && IsWindowVisible(h).as_bool() && GetForegroundWindow() == h {
-            let _ = ShowWindow(h, SW_HIDE);
+            hide_settings();
         } else {
             let _ = ShowWindow(h, SW_SHOW);
             let _ = ShowWindow(h, SW_RESTORE);
@@ -504,6 +492,92 @@ pub fn key_name(hk: Hotkey) -> String {
         }
     }
     s
+}
+
+fn tray_icon(action: NOTIFY_ICON_MESSAGE) {
+    let h = TRAY.load(Ordering::Acquire);
+    if h == 0 {
+        return;
+    }
+    unsafe {
+        let mut data = NOTIFYICONDATAW {
+            cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: HWND(h as _),
+            uID: 1,
+            uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
+            uCallbackMessage: WM_TRAY,
+            ..Default::default()
+        };
+        if action != NIM_DELETE {
+            // Resource 1 is the app icon that build.rs embeds.
+            let inst = GetModuleHandleW(None).ok().map(HINSTANCE::from);
+            let (cx, cy) = (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+            if let Ok(icon) = LoadImageW(inst, PCWSTR(1 as _), IMAGE_ICON, cx, cy, LR_SHARED) {
+                data.hIcon = HICON(icon.0);
+            }
+            let tip: Vec<u16> = TITLE.encode_utf16().collect();
+            data.szTip[..tip.len()].copy_from_slice(&tip);
+        }
+        let _ = Shell_NotifyIconW(action, &data);
+    }
+}
+
+/// Take the tray icon down before exiting, or it lingers until the mouse passes over it.
+pub fn remove_tray() {
+    tray_icon(NIM_DELETE);
+}
+
+unsafe extern "system" fn tray_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    match m {
+        WM_TRAY => match l.0 as u32 {
+            WM_LBUTTONUP => toggle_settings(true),
+            WM_RBUTTONUP => unsafe { tray_menu(h) },
+            _ => {}
+        },
+        // Explorer restarted and took the tray with it.
+        m if m != 0 && m == TASKBAR_CREATED.load(Ordering::Relaxed) => tray_icon(NIM_ADD),
+        _ => return unsafe { DefWindowProcW(h, m, w, l) },
+    }
+    LRESULT(0)
+}
+
+unsafe fn tray_menu(h: HWND) {
+    const OPEN: usize = 1;
+    const TOGGLE: usize = 2;
+    const QUIT: usize = 3;
+    unsafe {
+        let Ok(menu) = CreatePopupMenu() else { return };
+        let shown = if VISIBLE.load(Ordering::Relaxed) {
+            MF_CHECKED
+        } else {
+            MF_UNCHECKED
+        };
+        let _ = AppendMenuW(menu, MF_STRING, OPEN, w!("Open settings"));
+        let _ = AppendMenuW(menu, MF_STRING | shown, TOGGLE, w!("Show crosshair"));
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        let _ = AppendMenuW(menu, MF_STRING, QUIT, w!("Quit"));
+        let mut at = POINT::default();
+        let _ = GetCursorPos(&mut at);
+        // The menu only closes on an outside click if its window is in front.
+        let _ = SetForegroundWindow(h);
+        let flags = TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY;
+        let picked = TrackPopupMenu(menu, flags, at.x, at.y, None, h, None);
+        let _ = DestroyMenu(menu);
+        match picked.0 as usize {
+            OPEN => toggle_settings(true),
+            TOGGLE => {
+                VISIBLE.fetch_xor(true, Ordering::Relaxed);
+                refresh();
+            }
+            QUIT => {
+                // Same path as the installer's quit request: save, tidy up, exit.
+                let overlay = HWND(OVERLAY.load(Ordering::Acquire) as _);
+                let quit = RegisterWindowMessageW(MSG_QUIT);
+                let _ = PostMessageW(Some(overlay), quit, WPARAM(0), LPARAM(0));
+            }
+            _ => {}
+        }
+    }
 }
 
 unsafe extern "system" fn wndproc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {

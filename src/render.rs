@@ -1,10 +1,14 @@
 use crate::config::{Crosshair, Mode};
 
-/// Premultiplied BGRA pixels (u32 = 0xAARRGGBB), top-down. The crosshair centre is at (w/2, h/2).
+/// Premultiplied BGRA pixels (u32 = 0xAARRGGBB), top-down.
 pub struct Image {
     pub w: usize,
     pub h: usize,
     pub px: Vec<u32>,
+    /// Where the crosshair's centre is, in pixel-edge coordinates (same on both axes).
+    /// A whole number is the corner between pixels, x.5 the middle of a pixel. It isn't always
+    /// the middle of the image, so anything that centres the crosshair should use this.
+    pub centre: f32,
 }
 
 pub fn render(c: &Crosshair) -> Image {
@@ -34,7 +38,12 @@ fn pixels(c: &Crosshair) -> Image {
             px[y * w + x] = pack(rgb.map(|v| v * a), a);
         }
     }
-    Image { w, h: w, px }
+    Image {
+        w,
+        h: w,
+        px,
+        centre: w as f32 / 2.0,
+    }
 }
 
 /// Two coverage masks: the fill and the outline underneath it. Using max-coverage per mask
@@ -161,6 +170,7 @@ fn lines(c: &Crosshair) -> Image {
         w: w as usize,
         h: w as usize,
         px,
+        centre,
     }
 }
 
@@ -221,6 +231,13 @@ mod tests {
                     2 * cx - i
                 }
             };
+            // ...which is what the image reports as its centre.
+            let axis = if t % 2 == 0 {
+                cx as f32
+            } else {
+                cx as f32 + 0.5
+            };
+            assert_eq!(img.centre, axis, "thickness {t}");
             let at = |x: isize, y: isize| img.px[(y * w + x) as usize];
             for y in 0..w {
                 for x in 0..w {

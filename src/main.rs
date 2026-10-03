@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // no console in release
 
+mod apps;
 mod config;
 mod install;
 mod overlay;
@@ -42,6 +43,6 @@ fn main() -> eframe::Result {
     let s = settings.clone();
     std::thread::spawn(move || overlay::run(s));
     let updates = update::start(settings.clone());
-    // --startup is how Windows launches us at login: overlay only, settings stay hidden.
+    // --startup is how Windows launches us at login: overlay and tray icon, settings hidden.
     ui::run(settings, updates, flag("--startup"))
 }

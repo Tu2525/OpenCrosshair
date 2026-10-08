@@ -131,6 +131,8 @@ If a game still hides it, use borderless mode.
 - Closing the settings window hides it to the tray; the crosshair keeps running.
 - Launching OpenCrosshair while it's already running just brings up the settings.
 - Settings are saved as you change them, to `%APPDATA%\OpenCrosshair\settings.json`.
+- If it ever crashes, the details are written to `%APPDATA%\OpenCrosshair\crash.log`. Attaching that file to
+  an [issue](https://github.com/Tu2525/OpenCrosshair/issues) helps a lot.
 
 ## How it works
 
@@ -196,8 +198,8 @@ The exe ends up in `target/release/OpenCrosshair.exe`. Copy it to a name contain
 Bump `version` in `Cargo.toml`, commit, then tag and push:
 
 ```
-git tag v0.5.1
-git push origin v0.5.1
+git tag v0.5.2
+git push origin v0.5.2
 ```
 
 GitHub Actions builds the release and attaches both exes. Installed copies check every six hours and update themselves.

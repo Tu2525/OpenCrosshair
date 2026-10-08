@@ -11,12 +11,13 @@ before using any overlay in competitive play.
 
 ## Features
 
-- **Line crosshairs** with length, thickness, gap, outline, T-style, centre dot and circle.
+- **Line crosshairs** with length, thickness, gap, outline, T-style, centre dot and circle. Common colours
+  are one click away.
 - **Pixel canvas** up to 64×64 for anything the sliders can't do, with mirrored painting and undo.
 - **Your own images**: pick a picture or drop one on the window (PNG, JPEG, BMP, GIF, ICO, TIFF, WebP),
   then set its size and opacity. It's copied into the app's folder, so moving the original doesn't break it.
-- **Presets**, and a different preset for each game. Export them to a `.opencrosshair` file (pictures
-  included) to share or back up, and import files from others.
+- **Presets**, and a different preset for each game. Click a preset's name to rename it. Export them to
+  a `.opencrosshair` file (pictures included) to share or back up, and import files from others.
 - **While aiming**: hide the crosshair or switch to another preset while you hold (or toggle) a mouse
   button, for games with aim down sights. Set a default, then give any game its own rule, or tell it
   to ignore aiming altogether (so right-click can do nothing in one game and something in another).
@@ -195,8 +196,8 @@ The exe ends up in `target/release/OpenCrosshair.exe`. Copy it to a name contain
 Bump `version` in `Cargo.toml`, commit, then tag and push:
 
 ```
-git tag v0.4.1
-git push origin v0.4.1
+git tag v0.5.1
+git push origin v0.5.1
 ```
 
 GitHub Actions builds the release and attaches both exes. Installed copies check every six hours and update themselves.

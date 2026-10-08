@@ -202,6 +202,8 @@ git push origin v0.5.1
 
 GitHub Actions builds the release and attaches both exes. Installed copies check every six hours and update themselves.
 
+Releases are unsigned until code signing is set up, so Windows SmartScreen may warn about an unknown publisher. To turn signing on, apply to the SignPath Foundation's open-source program, create a project named `OpenCrosshair` with a `release-signing` policy, then add the repository secret `SIGNPATH_API_TOKEN` and the repository variable `SIGNPATH_ORGANIZATION_ID`. The release workflow signs the exe automatically once both are present.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

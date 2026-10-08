@@ -12,6 +12,8 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
 
@@ -30,6 +32,32 @@ jobs:
 
       - run: cargo test --release
       - run: cargo build --release
+
+      # Optional SignPath code signing. These steps are skipped unless the
+      # SIGNPATH_API_TOKEN secret exists; without it the unsigned exe is published.
+      - name: Upload exe for signing
+        id: upload-unsigned
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          path: target/release/OpenCrosshair.exe
+
+      - name: Submit SignPath signing request
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: 'OpenCrosshair'
+          signing-policy-slug: 'release-signing'
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: 'signed'
+
+      - name: Replace exe with signed exe
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: bash
+        run: cp signed/OpenCrosshair.exe target/release/OpenCrosshair.exe
 
       - name: Publish
         shell: bash

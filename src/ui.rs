@@ -3,13 +3,13 @@ use crate::config::{
     Theme,
 };
 use crate::overlay::{self, KEY_OK, Status, VISIBLE};
-use crate::{apps, install, picture, render, update};
+use crate::{apps, install, picture, render, share, update};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, RichText, Sense, Slider,
     Stroke, StrokeKind, TextureHandle, pos2, vec2,
 };
 use egui_phosphor::bold as icon;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -167,6 +167,7 @@ pub fn run(
                 undo: Vec::new(),
                 confirm_delete: None,
                 image_error: None,
+                preset_status: None,
                 open_game: None,
                 dirty: false,
             }))
@@ -321,6 +322,8 @@ struct App {
     confirm_delete: Option<String>,
     /// Why the last picture couldn't be used, shown on the Image card.
     image_error: Option<String>,
+    /// Result of the last preset export or import, shown on the Presets page.
+    preset_status: Option<String>,
     /// The game (by exe) whose aiming settings are open on the Games page.
     open_game: Option<String>,
     dirty: bool,
@@ -648,27 +651,41 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
                 .labelled_by(label.id);
             ui.end_row();
 
+            // With "Keep the crosshair" nothing changes while aiming, so these two do nothing.
+            let live = rule.action != Aim::Keep;
             let label = ui.label(RichText::new("Aim button").color(pal().muted));
-            egui::ComboBox::from_id_salt((id, "button"))
-                .selected_text(rule.button.label())
-                .width(220.0)
-                .show_ui(ui, |ui| {
-                    for b in AimButton::ALL {
-                        ui.selectable_value(&mut rule.button, b, b.label());
-                    }
-                })
-                .response
-                .labelled_by(label.id);
+            ui.add_enabled_ui(live, |ui| {
+                egui::ComboBox::from_id_salt((id, "button"))
+                    .selected_text(rule.button.label())
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        for b in AimButton::ALL {
+                            ui.selectable_value(&mut rule.button, b, b.label());
+                        }
+                    })
+                    .response
+                    .labelled_by(label.id);
+            });
             ui.end_row();
 
             row(ui, "", |ui| {
-                check(
-                    ui,
-                    &mut rule.toggle,
-                    "Toggle: press once to aim, again to stop",
-                );
+                ui.add_enabled_ui(live, |ui| {
+                    check(
+                        ui,
+                        &mut rule.toggle,
+                        "Toggle: press once to aim, press again to stop",
+                    );
+                });
             });
         });
+    if rule.action == Aim::Keep {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("Choose \"Hide it\" or a preset above to turn on the button and toggle.")
+                .small()
+                .color(pal().muted),
+        );
+    }
 }
 
 /// What a rule does, in a few words, for showing the default next to a game that follows it.
@@ -1699,17 +1716,32 @@ impl App {
 
         let mut load = None;
         let mut delete = None;
+        let mut export = None;
+        let mut export_all = false;
+        let mut import = false;
         card(ui, "Saved", |ui| {
+            ui.horizontal(|ui| {
+                if !self.local.presets.is_empty() && ghost(ui, "Export all").clicked() {
+                    export_all = true;
+                }
+                if ghost(ui, "Import").clicked() {
+                    import = true;
+                }
+            });
+            if let Some(s) = &self.preset_status {
+                ui.label(RichText::new(s).small().color(pal().muted));
+            }
+            ui.add_space(4.0);
             if self.local.presets.is_empty() {
                 empty_state(
                     ui,
                     icon::BOOKMARKS_SIMPLE,
                     "Nothing saved yet",
-                    "Save the crosshair above to keep it, and give each game its own.",
+                    "Save the crosshair above to keep it, and give each game its own. Or import presets someone shared with you.",
                 );
             }
             egui::Grid::new("presets")
-                .num_columns(4)
+                .num_columns(5)
                 .spacing([14.0, 10.0])
                 .show(ui, |ui| {
                     for (name, c) in &self.local.presets {
@@ -1735,6 +1767,15 @@ impl App {
                             .clicked()
                         {
                             load = Some(name.clone());
+                        }
+                        let export_btn =
+                            egui::Button::new(RichText::new(icon::EXPORT).color(pal().muted))
+                                .frame_when_inactive(false);
+                        if name_it(ui.add(export_btn), format!("Export {name}"))
+                            .on_hover_text("Export")
+                            .clicked()
+                        {
+                            export = Some(name.clone());
                         }
                         let armed = self.confirm_delete.as_ref() == Some(name);
                         let text = if armed {
@@ -1769,6 +1810,22 @@ impl App {
                     }
                 });
         });
+        if let Some(n) = export {
+            let one = BTreeMap::from([(n.clone(), self.local.presets[&n].clone())]);
+            // Windows won't take these in a file name, and a preset name can hold any of them.
+            let file: String = n
+                .chars()
+                .map(|c| if r#"\/:*?"<>|"#.contains(c) { '_' } else { c })
+                .collect();
+            self.export_presets(&one, &format!("{file}.opencrosshair"));
+        }
+        if export_all {
+            let all = self.local.presets.clone();
+            self.export_presets(&all, "OpenCrosshair presets.opencrosshair");
+        }
+        if import {
+            self.import_presets();
+        }
         if let Some(n) = load {
             self.local.crosshair = self.local.presets[&n].clone();
             self.preset_name = n;
@@ -1787,6 +1844,36 @@ impl App {
                 self.local.aim = Aim::Keep;
             }
         }
+    }
+
+    /// Ask where to save, then write the presets to that file.
+    fn export_presets(&mut self, presets: &BTreeMap<String, Crosshair>, default_name: &str) {
+        let Some(path) = picture::save_share(overlay::settings_window(), default_name) else {
+            return;
+        };
+        self.preset_status = Some(match std::fs::write(&path, share::export(presets)) {
+            Ok(()) => "Exported.".into(),
+            Err(_) => "Couldn't save that file.".into(),
+        });
+    }
+
+    /// Ask for a share file and add the presets in it.
+    fn import_presets(&mut self) {
+        let Some(path) = picture::pick_share(overlay::settings_window()) else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            self.preset_status = Some("Couldn't read that file.".into());
+            return;
+        };
+        self.preset_status = Some(match share::import(&text, &self.local.presets) {
+            Ok(new) => {
+                let n = new.len();
+                self.local.presets.extend(new);
+                format!("Imported {n} preset{}.", if n == 1 { "" } else { "s" })
+            }
+            Err(e) => e,
+        });
     }
 
     fn settings_page(&mut self, ui: &mut egui::Ui) {

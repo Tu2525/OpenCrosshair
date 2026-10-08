@@ -152,7 +152,7 @@ impl Crosshair {
     }
 
     /// Repair hand-edited / corrupt values so rendering can't misbehave.
-    fn sanitize(&mut self) {
+    pub fn sanitize(&mut self) {
         self.scale = self.scale.clamp(1, MAX_SCALE);
         let n = self.grid.clamp(1, MAX_GRID);
         if self.grid != n || self.pixels.len() != (n * n) as usize {
@@ -254,18 +254,19 @@ pub fn images_dir() -> PathBuf {
 /// or deleted. It's named after its contents, so importing the same file twice keeps one copy.
 pub fn import_image(src: &Path) -> std::io::Result<String> {
     let bytes = std::fs::read(src)?;
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    import_bytes(bytes, ext)
+}
+
+/// The same as `import_image`, for bytes that didn't come from a file (e.g. a shared preset).
+pub fn import_bytes(bytes: Vec<u8>, ext: &str) -> std::io::Result<String> {
     if bytes.len() > 20 << 20 {
         return Err(std::io::Error::other("that file is over 20 MB"));
     }
     let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
         (h ^ b as u64).wrapping_mul(0x100_0000_01b3) // FNV-1a
     });
-    let ext = src
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("png")
-        .to_lowercase();
-    let name = format!("{hash:016x}.{ext}");
+    let name = format!("{hash:016x}.{}", ext.to_lowercase());
     std::fs::create_dir_all(images_dir())?;
     std::fs::write(images_dir().join(&name), bytes)?;
     Ok(name)

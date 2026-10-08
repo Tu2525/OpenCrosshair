@@ -7,7 +7,9 @@ use windows::Win32::Foundation::{GENERIC_READ, HWND};
 use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::System::Com::*;
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
-use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, SIGDN_FILESYSPATH};
+use windows::Win32::UI::Shell::{
+    FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, SIGDN_FILESYSPATH,
+};
 use windows::core::{HSTRING, w};
 
 thread_local! {
@@ -93,6 +95,67 @@ pub fn pick(owner: Option<HWND>) -> Option<PathBuf> {
         let path = name.to_string().ok();
         CoTaskMemFree(Some(name.0 as _));
         path.map(PathBuf::from)
+    }
+}
+
+/// The open dialog for importing a crosshair share file. None if you cancel.
+pub fn pick_share(owner: Option<HWND>) -> Option<PathBuf> {
+    COM.with(|_| ());
+    unsafe {
+        let dialog: IFileOpenDialog =
+            CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let filter = [
+            COMDLG_FILTERSPEC {
+                pszName: w!("OpenCrosshair files"),
+                pszSpec: w!("*.opencrosshair"),
+            },
+            COMDLG_FILTERSPEC {
+                pszName: w!("All files"),
+                pszSpec: w!("*.*"),
+            },
+        ];
+        dialog.SetFileTypes(&filter).ok()?;
+        dialog.SetTitle(w!("Import crosshairs")).ok()?;
+        dialog.Show(owner).ok()?; // cancelling comes back as an error
+        let name = dialog
+            .GetResult()
+            .ok()?
+            .GetDisplayName(SIGDN_FILESYSPATH)
+            .ok()?;
+        let path = name.to_string().ok();
+        CoTaskMemFree(Some(name.0 as _));
+        path.map(PathBuf::from)
+    }
+}
+
+/// The save dialog for exporting a crosshair share file, suggesting `default_name`. The path
+/// gets the .opencrosshair extension if you typed none. None if you cancel.
+pub fn save_share(owner: Option<HWND>, default_name: &str) -> Option<PathBuf> {
+    COM.with(|_| ());
+    unsafe {
+        let dialog: IFileSaveDialog =
+            CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let filter = [COMDLG_FILTERSPEC {
+            pszName: w!("OpenCrosshair files"),
+            pszSpec: w!("*.opencrosshair"),
+        }];
+        dialog.SetFileTypes(&filter).ok()?;
+        dialog.SetFileName(&HSTRING::from(default_name)).ok()?;
+        dialog.SetDefaultExtension(w!("opencrosshair")).ok()?;
+        dialog.SetTitle(w!("Export crosshairs")).ok()?;
+        dialog.Show(owner).ok()?; // cancelling comes back as an error
+        let name = dialog
+            .GetResult()
+            .ok()?
+            .GetDisplayName(SIGDN_FILESYSPATH)
+            .ok()?;
+        let text = name.to_string().ok();
+        CoTaskMemFree(Some(name.0 as _));
+        let mut path = PathBuf::from(text?);
+        if path.extension().is_none() {
+            path.set_extension("opencrosshair");
+        }
+        Some(path)
     }
 }
 

@@ -6,6 +6,7 @@ mod install;
 mod overlay;
 mod picture;
 mod render;
+mod share;
 mod ui;
 mod update;
 

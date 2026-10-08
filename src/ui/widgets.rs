@@ -1,4 +1,4 @@
-use super::{Semi, pal, semibold};
+use super::{LABEL_COL, Semi, pal, semibold};
 use crate::config::Crosshair;
 use crate::render;
 use eframe::egui::{
@@ -18,7 +18,7 @@ pub(super) fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             if !title.is_empty() {
-                ui.label(RichText::new(title).size(13.0).semi().color(pal().muted));
+                caption(ui, title);
                 ui.add_space(6.0);
             }
             add(ui)
@@ -26,6 +26,16 @@ pub(super) fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui
         .inner;
     ui.add_space(14.0);
     r
+}
+
+/// The quiet semibold line above a card's contents.
+pub(super) fn caption(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).size(13.0).semi().color(pal().muted));
+}
+
+/// Small muted note under a control or a status line.
+pub(super) fn hint(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
+    ui.label(RichText::new(text).small().color(pal().muted))
 }
 
 /// What to show where a list would be: what this is, and how to start.
@@ -44,7 +54,7 @@ pub(super) fn empty_state(ui: &mut egui::Ui, icon: &str, title: &str, body: &str
         );
         ui.add_space(6.0);
         ui.label(RichText::new(title).semi());
-        ui.label(RichText::new(body).small().color(pal().muted));
+        hint(ui, body);
         ui.add_space(6.0);
     });
 }
@@ -143,6 +153,21 @@ pub(super) fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui
     ui.end_row();
 }
 
+/// Editor grid: a label column, then the control, with the same gaps everywhere so the sliders
+/// line up.
+pub(super) fn form<R>(
+    ui: &mut egui::Ui,
+    id: impl egui::AsIdSalt,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    egui::Grid::new(id)
+        .num_columns(2)
+        .min_col_width(LABEL_COL)
+        .spacing([20.0, 10.0])
+        .show(ui, add)
+        .inner
+}
+
 pub(super) fn heading(ui: &mut egui::Ui, title: &str, sub: &str) {
     ui.label(RichText::new(title).heading().extra_letter_spacing(-0.4));
     ui.label(RichText::new(sub).color(pal().muted));
@@ -234,6 +259,17 @@ pub(super) fn ghost(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let r = ui
         .add(egui::Button::new(RichText::new(text).color(pal().muted)).frame_when_inactive(false));
     name_it(r, plain(text))
+}
+
+/// A quiet icon-only button. The icon says nothing to a screen reader, so it gets a name too.
+pub(super) fn icon_button(
+    ui: &mut egui::Ui,
+    icon: &str,
+    name: impl ToString,
+    tip: &str,
+) -> egui::Response {
+    let btn = egui::Button::new(RichText::new(icon).color(pal().muted)).frame_when_inactive(false);
+    name_it(ui.add(btn), name).on_hover_text(tip)
 }
 
 /// Small uppercase pill.

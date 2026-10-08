@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
-use widgets::{Tex, badge, nav_item, switch};
+use widgets::{Tex, badge, hint, nav_item, switch};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -580,7 +580,7 @@ impl App {
                     "Showing over every app".to_string(),
                 ),
             };
-            ui.label(RichText::new(detail).small().color(pal().muted));
+            hint(ui, detail);
             badge(ui, badge_text, tone);
             ui.add_space(6.0);
 

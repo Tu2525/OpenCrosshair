@@ -1,4 +1,4 @@
-use super::widgets::{card, check, ghost, heading, name_it, segment};
+use super::widgets::{card, check, ghost, heading, hint, name_it, segment};
 use super::{App, Semi, pal};
 use crate::config::Theme;
 use crate::overlay::{self, KEY_OK};
@@ -63,11 +63,7 @@ impl App {
                     }
                 }
             });
-            ui.label(
-                RichText::new("System follows Windows' light or dark app mode.")
-                    .small()
-                    .color(pal().muted),
-            );
+            hint(ui, "System follows Windows' light or dark app mode.");
         });
         card(ui, "Keybinds", |ui| {
             egui::Grid::new("keys")
@@ -116,13 +112,12 @@ impl App {
                         ui.end_row();
                     }
                 });
-            ui.label(
-                RichText::new(format!(
+            hint(
+                ui,
+                format!(
                     "{}  Click a key, then press any key or combo. Esc cancels.",
                     icon::KEYBOARD
-                ))
-                .small()
-                .color(pal().muted),
+                ),
             );
         });
         card(ui, "Startup", |ui| {
@@ -139,13 +134,12 @@ impl App {
                 }
             });
             let menu = overlay::key_name(self.local.menu_key);
-            ui.label(
-                RichText::new(format!(
+            hint(
+                ui,
+                format!(
                     "{}  Starts quietly when you log in, in the tray. Press {menu} or click the tray icon for settings.",
                     icon::ROCKET_LAUNCH
-                ))
-                .small()
-                .color(pal().muted),
+                ),
             );
         });
         card(ui, "Updates", |ui| {
@@ -182,21 +176,16 @@ impl App {
                 if ui.add_enabled(!busy, check).clicked() {
                     let _ = self.updates.send(());
                 }
-                ui.label(RichText::new(text).small().color(pal().muted));
+                hint(ui, text);
             });
-            ui.label(
-                RichText::new("Updates come from the project's GitHub releases. It never restarts while you're in a game.")
-                    .small()
-                    .color(pal().muted),
+            hint(
+                ui,
+                "Updates come from the project's GitHub releases. It never restarts while you're in a game.",
             );
         });
         card(ui, "About", |ui| {
             let repo = env!("CARGO_PKG_REPOSITORY");
-            ui.label(
-                RichText::new("Free and open source, under the MIT license.")
-                    .small()
-                    .color(pal().muted),
-            );
+            hint(ui, "Free and open source, under the MIT license.");
             ui.horizontal(|ui| {
                 if ghost(ui, &format!("{}  Source on GitHub", icon::GITHUB_LOGO)).clicked() {
                     install::open_url(repo);

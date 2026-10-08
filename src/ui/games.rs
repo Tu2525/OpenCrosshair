@@ -1,5 +1,5 @@
 use super::widgets::{
-    card, check, empty_state, ghost, heading, name_it, primary, row, segment, texture, thumb,
+    card, check, empty_state, ghost, heading, hint, name_it, primary, row, segment, texture, thumb,
 };
 use super::{App, Semi, pal};
 use crate::apps;
@@ -64,10 +64,9 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
         });
     if rule.action == Aim::Keep {
         ui.add_space(4.0);
-        ui.label(
-            RichText::new("Choose \"Hide it\" or a preset above to turn on the button and toggle.")
-                .small()
-                .color(pal().muted),
+        hint(
+            ui,
+            "Choose \"Hide it\" or a preset above to turn on the button and toggle.",
         );
     }
 }
@@ -158,12 +157,12 @@ impl App {
                 &mut s.only_games,
                 RichText::new("Only show in my games").semi(),
             );
-            let hint = if s.only_games {
+            let note = if s.only_games {
                 "Hidden in every other app. It still shows while this window is focused, so you can preview."
             } else {
                 "The crosshair currently draws on top of everything."
             };
-            ui.label(RichText::new(hint).small().color(pal().muted));
+            hint(ui, note);
         });
 
         // The default rule, which every game follows unless it has its own (see its row below).
@@ -284,13 +283,10 @@ impl App {
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.label(RichText::new(format!("Aiming in {name}")).semi());
-                            ui.label(
-                                RichText::new(
-                                    "What a mouse button does to the crosshair in this game. \
-                                     Choose \"Keep the crosshair\" to make it ignore aiming here.",
-                                )
-                                .small()
-                                .color(pal().muted),
+                            hint(
+                                ui,
+                                "What a mouse button does to the crosshair in this game. \
+                                 Choose \"Keep the crosshair\" to make it ignore aiming here.",
                             );
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
@@ -311,13 +307,12 @@ impl App {
                             match &mut g.aim {
                                 Some(rule) => aim_controls(ui, &g.exe, &preset_names, rule),
                                 None => {
-                                    ui.label(
-                                        RichText::new(format!(
+                                    hint(
+                                        ui,
+                                        format!(
                                             "Using your default: {}.",
                                             describe_aim(&default_rule)
-                                        ))
-                                        .small()
-                                        .color(pal().muted),
+                                        ),
                                     );
                                 }
                             }
@@ -355,13 +350,10 @@ impl App {
                     .color(pal().yellow.1),
                 );
                 if info.fso == apps::Fso::OffForEveryone {
-                    ui.label(
-                        RichText::new(
-                            "It's set for every account. Untick \"Disable fullscreen optimizations\" \
-                             in the game's Properties > Compatibility tab (needs admin), or play borderless.",
-                        )
-                        .small()
-                        .color(pal().muted),
+                    hint(
+                        ui,
+                        "It's set for every account. Untick \"Disable fullscreen optimizations\" \
+                         in the game's Properties > Compatibility tab (needs admin), or play borderless.",
                     );
                 } else if ghost(ui, &format!("{}  Turn them back on", icon::WRENCH)).clicked()
                     && apps::enable_fullscreen_optimizations(&g.path)
@@ -437,30 +429,20 @@ impl App {
                     self.game_input.clear();
                 }
             });
-            ui.label(
-                RichText::new("Open the game first, then press Refresh to find it.")
-                    .small()
-                    .color(pal().muted),
-            );
+            hint(ui, "Open the game first, then press Refresh to find it.");
         });
 
         card(ui, "While aiming", |ui| {
             let mut rule = default_rule.clone();
             aim_controls(ui, "default", &preset_names, &mut rule);
             (s.aim, s.aim_button, s.aim_toggle) = (rule.action, rule.button, rule.toggle);
-            ui.label(
-                RichText::new(
-                    "For games where you aim down sights. It reads the button's state, with no input hooks.",
-                )
-                .small()
-                .color(pal().muted),
+            hint(
+                ui,
+                "For games where you aim down sights. It reads the button's state, with no input hooks.",
             );
-            ui.label(
-                RichText::new(
-                    "This is the default for every game. To give one game its own, use Default aim on its row in My games.",
-                )
-                .small()
-                .color(pal().muted),
+            hint(
+                ui,
+                "This is the default for every game. To give one game its own, use Default aim on its row in My games.",
             );
         });
     }

@@ -1,7 +1,7 @@
 use super::widgets::{
-    card, check, draw_fit, ghost, heading, name_it, primary, row, segment, texture,
+    card, check, draw_fit, form, ghost, heading, hint, name_it, primary, row, segment, texture,
 };
-use super::{App, LABEL_COL, Page, pal};
+use super::{App, Page, pal};
 use crate::config::{self, Crosshair, MAX_GRID, MAX_IMAGE, MAX_SCALE, Mode};
 use crate::{overlay, picture};
 use eframe::egui::{
@@ -170,10 +170,9 @@ impl App {
                 };
                 ui.label(RichText::new(current).color(pal().muted));
             });
-            ui.label(
-                RichText::new("Or drop a picture onto this window. PNG with a transparent background works best.")
-                    .small()
-                    .color(pal().muted),
+            hint(
+                ui,
+                "Or drop a picture onto this window. PNG with a transparent background works best.",
             );
             if let Some(e) = &self.image_error {
                 ui.label(
@@ -183,18 +182,14 @@ impl App {
                 );
             }
             ui.add_space(4.0);
-            egui::Grid::new("image_opts")
-                .num_columns(2)
-                .min_col_width(LABEL_COL)
-                .spacing([20.0, 10.0])
-                .show(ui, |ui| {
-                    row(ui, "Size", |ui| {
-                        ui.add(Slider::new(&mut c.image_size, 4..=MAX_IMAGE).suffix(" px"));
-                    });
-                    row(ui, "Opacity", |ui| {
-                        ui.add(Slider::new(&mut c.image_opacity, 5..=100).suffix("%"));
-                    });
+            form(ui, "image_opts", |ui| {
+                row(ui, "Size", |ui| {
+                    ui.add(Slider::new(&mut c.image_size, 4..=MAX_IMAGE).suffix(" px"));
                 });
+                row(ui, "Opacity", |ui| {
+                    ui.add(Slider::new(&mut c.image_opacity, 5..=100).suffix("%"));
+                });
+            });
         });
         if choose && let Some(path) = picture::pick(overlay::settings_window()) {
             self.use_image(&path);
@@ -222,77 +217,71 @@ impl App {
     fn pixels_ui(&mut self, ui: &mut egui::Ui) {
         let c = &mut self.local.crosshair;
         card(ui, "Canvas", |ui| {
-            egui::Grid::new("canvas_opts")
-                .num_columns(2)
-                .min_col_width(LABEL_COL)
-                .spacing([20.0, 10.0])
-                .show(ui, |ui| {
-                    let mut n = c.grid;
-                    row(ui, "Size", |ui| {
-                        let r = ui.add(Slider::new(&mut n, 3..=MAX_GRID).suffix(" cells"));
-                        // Shrinking crops the drawing, so make it undoable (once per drag).
-                        if r.drag_started() || (r.changed() && !r.dragged()) {
-                            self.undo.push((c.grid, c.pixels.clone()));
-                        }
-                        if r.changed() {
-                            c.resize_grid(n);
-                        }
-                    });
-                    slider(ui, "Pixel scale", &mut c.scale, 1..=MAX_SCALE);
-                    row(ui, "Brush", |ui| {
-                        ui.horizontal(|ui| {
-                            name_it(
-                                ui.color_edit_button_srgba_unmultiplied(&mut self.brush),
-                                "Brush colour",
-                            );
-                            swatches(ui, &mut self.brush);
-                        });
-                    });
-                    // The mirror toggles get their own line: next to the swatches they'd run off
-                    // a narrow window.
-                    row(ui, "", |ui| {
-                        ui.horizontal(|ui| {
-                            ui.toggle_value(
-                                &mut self.mirror_x,
-                                format!("{} Mirror X", icon::FLIP_HORIZONTAL),
-                            );
-                            ui.toggle_value(
-                                &mut self.mirror_y,
-                                format!("{} Mirror Y", icon::FLIP_VERTICAL),
-                            );
-                        });
-                    });
-                    row(ui, "", |ui| {
-                        ui.horizontal(|ui| {
-                            let undo =
-                                egui::Button::new(format!("{}  Undo", icon::ARROW_U_UP_LEFT));
-                            let undo = ui
-                                .add_enabled(!self.undo.is_empty(), undo)
-                                .on_hover_text("Ctrl+Z");
-                            let ctrl_z =
-                                egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
-                            let ctrl_z = ui.input_mut(|i| i.consume_shortcut(&ctrl_z));
-                            if (undo.clicked() || ctrl_z)
-                                && let Some((grid, px)) = self.undo.pop()
-                            {
-                                (c.grid, c.pixels) = (grid, px);
-                            }
-                            if ghost(ui, &format!("{}  Clear", icon::TRASH)).clicked() {
-                                self.undo.push((c.grid, c.pixels.clone()));
-                                c.pixels.fill([0; 4]);
-                            }
-                        });
+            form(ui, "canvas_opts", |ui| {
+                let mut n = c.grid;
+                row(ui, "Size", |ui| {
+                    let r = ui.add(Slider::new(&mut n, 3..=MAX_GRID).suffix(" cells"));
+                    // Shrinking crops the drawing, so make it undoable (once per drag).
+                    if r.drag_started() || (r.changed() && !r.dragged()) {
+                        self.undo.push((c.grid, c.pixels.clone()));
+                    }
+                    if r.changed() {
+                        c.resize_grid(n);
+                    }
+                });
+                slider(ui, "Pixel scale", &mut c.scale, 1..=MAX_SCALE);
+                row(ui, "Brush", |ui| {
+                    ui.horizontal(|ui| {
+                        name_it(
+                            ui.color_edit_button_srgba_unmultiplied(&mut self.brush),
+                            "Brush colour",
+                        );
+                        swatches(ui, &mut self.brush);
                     });
                 });
-            ui.label(
-                RichText::new(format!(
+                // The mirror toggles get their own line: next to the swatches they'd run off
+                // a narrow window.
+                row(ui, "", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.toggle_value(
+                            &mut self.mirror_x,
+                            format!("{} Mirror X", icon::FLIP_HORIZONTAL),
+                        );
+                        ui.toggle_value(
+                            &mut self.mirror_y,
+                            format!("{} Mirror Y", icon::FLIP_VERTICAL),
+                        );
+                    });
+                });
+                row(ui, "", |ui| {
+                    ui.horizontal(|ui| {
+                        let undo = egui::Button::new(format!("{}  Undo", icon::ARROW_U_UP_LEFT));
+                        let undo = ui
+                            .add_enabled(!self.undo.is_empty(), undo)
+                            .on_hover_text("Ctrl+Z");
+                        let ctrl_z =
+                            egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+                        let ctrl_z = ui.input_mut(|i| i.consume_shortcut(&ctrl_z));
+                        if (undo.clicked() || ctrl_z)
+                            && let Some((grid, px)) = self.undo.pop()
+                        {
+                            (c.grid, c.pixels) = (grid, px);
+                        }
+                        if ghost(ui, &format!("{}  Clear", icon::TRASH)).clicked() {
+                            self.undo.push((c.grid, c.pixels.clone()));
+                            c.pixels.fill([0; 4]);
+                        }
+                    });
+                });
+            });
+            hint(
+                ui,
+                format!(
                     "{} Left paint    {} Right erase    {} Middle pick colour",
                     icon::PAINT_BRUSH,
                     icon::ERASER,
                     icon::EYEDROPPER
-                ))
-                .small()
-                .color(pal().muted),
+                ),
             );
             ui.add_space(8.0);
 
@@ -433,35 +422,27 @@ fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
         });
     });
     card(ui, "Lines", |ui| {
-        egui::Grid::new("lines")
-            .num_columns(2)
-            .min_col_width(LABEL_COL)
-            .spacing([20.0, 10.0])
-            .show(ui, |ui| {
-                slider(ui, "Length", &mut c.length, 0..=50);
-                slider(ui, "Thickness", &mut c.thickness, 1..=20);
-                slider(ui, "Gap", &mut c.gap, 0..=50);
-                slider(ui, "Outline", &mut c.outline, 0..=5);
-                row(ui, "", |ui| {
-                    check(ui, &mut c.t_style, "T-style (no top line)");
-                });
+        form(ui, "lines", |ui| {
+            slider(ui, "Length", &mut c.length, 0..=50);
+            slider(ui, "Thickness", &mut c.thickness, 1..=20);
+            slider(ui, "Gap", &mut c.gap, 0..=50);
+            slider(ui, "Outline", &mut c.outline, 0..=5);
+            row(ui, "", |ui| {
+                check(ui, &mut c.t_style, "T-style (no top line)");
             });
+        });
     });
     card(ui, "Dot & circle", |ui| {
-        egui::Grid::new("extras")
-            .num_columns(2)
-            .min_col_width(LABEL_COL)
-            .spacing([20.0, 10.0])
-            .show(ui, |ui| {
-                row(ui, "", |ui| {
-                    check(ui, &mut c.dot, "Centre dot");
-                });
-                slider_when(ui, c.dot, "Dot size", &mut c.dot_size, 1..=20);
-                row(ui, "", |ui| {
-                    check(ui, &mut c.circle, "Circle");
-                });
-                slider_when(ui, c.circle, "Radius", &mut c.circle_radius, 1..=100);
-                slider_when(ui, c.circle, "Ring width", &mut c.circle_thickness, 1..=10);
+        form(ui, "extras", |ui| {
+            row(ui, "", |ui| {
+                check(ui, &mut c.dot, "Centre dot");
             });
+            slider_when(ui, c.dot, "Dot size", &mut c.dot_size, 1..=20);
+            row(ui, "", |ui| {
+                check(ui, &mut c.circle, "Circle");
+            });
+            slider_when(ui, c.circle, "Radius", &mut c.circle_radius, 1..=100);
+            slider_when(ui, c.circle, "Ring width", &mut c.circle_thickness, 1..=10);
+        });
     });
 }

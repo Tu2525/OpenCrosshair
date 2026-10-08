@@ -1,4 +1,6 @@
-use super::widgets::{card, empty_state, ghost, heading, name_it, primary, texture, thumb};
+use super::widgets::{
+    caption, card, empty_state, ghost, heading, hint, icon_button, name_it, primary, texture, thumb,
+};
 use super::{App, Semi, pal};
 use crate::config::{Crosshair, Mode};
 use crate::{overlay, picture, share};
@@ -55,7 +57,7 @@ impl App {
         let mut commit_rename = None;
         card(ui, "", |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Saved").size(13.0).semi().color(pal().muted));
+                caption(ui, "Saved");
                 // Right to left, so Import goes first to sit to the right of Export all.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ghost(ui, &format!("{}  Import", icon::DOWNLOAD_SIMPLE)).clicked() {
@@ -70,7 +72,7 @@ impl App {
             });
             ui.add_space(6.0);
             if let Some(s) = &self.preset_status {
-                ui.label(RichText::new(s).small().color(pal().muted));
+                hint(ui, s);
             }
             ui.add_space(4.0);
             if self.local.presets.is_empty() {
@@ -123,7 +125,7 @@ impl App {
                                 Mode::Pixels => format!("Pixel {0}×{0}", c.grid),
                                 Mode::Image => "Image".to_string(),
                             };
-                            ui.label(RichText::new(kind).small().color(pal().muted));
+                            hint(ui, kind);
                         });
                         if self.local.crosshair == *c {
                             // A pill would stretch to this tall row, so plain text instead.
@@ -136,11 +138,7 @@ impl App {
                         {
                             load = Some(name.clone());
                         }
-                        let export_btn =
-                            egui::Button::new(RichText::new(icon::EXPORT).color(pal().muted))
-                                .frame_when_inactive(false);
-                        if name_it(ui.add(export_btn), format!("Export {name}"))
-                            .on_hover_text("Export")
+                        if icon_button(ui, icon::EXPORT, format!("Export {name}"), "Export")
                             .clicked()
                         {
                             export = Some(name.clone());

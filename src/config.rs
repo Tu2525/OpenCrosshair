@@ -250,6 +250,11 @@ pub fn images_dir() -> PathBuf {
     dir("OpenCrosshair").join("images")
 }
 
+/// Where panics are written, so a crash leaves something for a bug report.
+pub fn crash_log() -> PathBuf {
+    dir("OpenCrosshair").join("crash.log")
+}
+
 /// Copy a picture into our own folder, so the crosshair keeps working if the original is moved
 /// or deleted. It's named after its contents, so importing the same file twice keeps one copy.
 pub fn import_image(src: &Path) -> std::io::Result<String> {

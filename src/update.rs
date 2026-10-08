@@ -1,4 +1,6 @@
-//! Updates itself from the latest GitHub release.
+//! Updates itself from the latest GitHub release. The release is looked up on github.com rather
+//! than the API, which allows only 60 unauthenticated requests an hour per IP and runs out quickly
+//! on shared networks.
 //!
 //! Windows won't let you overwrite a running exe, but it will let you rename one. So the new
 //! build is written next to the old one, the two swap names, and the app restarts into the new
@@ -7,7 +9,6 @@
 
 use crate::config::Settings;
 use crate::overlay;
-use serde::Deserialize;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -40,17 +41,12 @@ fn set(s: Status) {
     crate::ui::repaint();
 }
 
-#[derive(Deserialize)]
-struct Release {
-    tag_name: String,
-    assets: Vec<Asset>,
-}
-
-#[derive(Deserialize)]
-struct Asset {
-    name: String,
-    browser_download_url: String,
-    size: u64,
+/// What a request brought back. Headers are None when the server didn't send them.
+struct Response {
+    status: u32,
+    body: Vec<u8>,
+    location: Option<String>,
+    content_length: Option<u64>,
 }
 
 /// Remove what the last update left behind. Right after an update the old process can still be
@@ -124,37 +120,55 @@ fn parse(v: &str) -> (u32, u32, u32) {
     )
 }
 
+/// "https://github.com/o/r/releases/tag/v1.2.3" -> "v1.2.3". None if there's no single tag in it.
+fn tag_from_location(location: &str) -> Option<&str> {
+    let tag = location.rsplit_once("/releases/tag/")?.1;
+    (!tag.is_empty() && !tag.contains('/')).then_some(tag)
+}
+
+/// Asks github.com, not the API, for the newest release's tag. None if no release is published.
+fn latest_tag() -> Result<Option<String>, String> {
+    let probe = request(&format!("https://github.com/{REPO}/releases/latest"), false)?;
+    let location = match probe.location {
+        Some(location) => location,
+        None if probe.status == 404 => return Ok(None), // no releases published yet
+        None => return Err(format!("GitHub returned HTTP {}", probe.status)),
+    };
+    // No tag in the redirect means it went to a non-release page: still no release.
+    Ok(tag_from_location(&location).map(str::to_owned))
+}
+
 /// Downloads and swaps in a newer release if there is one. Returns the exe path and version.
 fn check_and_install() -> Result<Option<(PathBuf, String)>, String> {
-    let (status, body) = get(&format!(
-        "https://api.github.com/repos/{REPO}/releases/latest"
-    ))?;
-    if status == 404 {
-        return Ok(None); // no releases published yet
-    }
-    if status != 200 {
-        return Err(format!("GitHub returned HTTP {status}"));
-    }
-    let release: Release =
-        serde_json::from_slice(&body).map_err(|e| format!("unexpected reply from GitHub: {e}"))?;
-    if parse(&release.tag_name) <= parse(VERSION) {
+    let Some(tag) = latest_tag()? else {
+        return Ok(None);
+    };
+    if parse(&tag) <= parse(VERSION) {
         return Ok(None);
     }
-    let asset = release
-        .assets
-        .iter()
-        .find(|a| a.name == ASSET)
-        .ok_or("the release has no OpenCrosshair.exe")?;
 
-    set(Status::Downloading(release.tag_name.clone()));
-    let (status, exe_bytes) = get(&asset.browser_download_url)?;
+    set(Status::Downloading(tag.clone()));
+    let res = request(
+        &format!("https://github.com/{REPO}/releases/download/{tag}/{ASSET}"),
+        true,
+    )?;
+    if res.status == 404 {
+        return Err("the release has no OpenCrosshair.exe".into());
+    }
     // A cut-off download would leave an exe that doesn't start, so check it's all there.
-    if status != 200 || exe_bytes.len() as u64 != asset.size || !exe_bytes.starts_with(b"MZ") {
+    // The real exe is ~7 MB, so anything tiny is an error page, not a build.
+    let complete = res.status == 200
+        && res.body.starts_with(b"MZ")
+        && res.body.len() >= 1024 * 1024
+        && res
+            .content_length
+            .is_none_or(|n| n == res.body.len() as u64);
+    if !complete {
         return Err("the download was incomplete".into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    swap(&exe, &exe_bytes).map_err(|e| format!("couldn't replace {}: {e}", exe.display()))?;
-    Ok(Some((exe, release.tag_name)))
+    swap(&exe, &res.body).map_err(|e| format!("couldn't replace {}: {e}", exe.display()))?;
+    Ok(Some((exe, tag)))
 }
 
 fn swap(exe: &Path, new_bytes: &[u8]) -> std::io::Result<()> {
@@ -192,8 +206,9 @@ fn restart(exe: &Path, version: &str, settings: &Mutex<Settings>) {
 }
 
 /// Minimal HTTPS GET on WinHTTP, which ships with Windows: no TLS library to bundle.
-/// Follows redirects (GitHub sends downloads to its CDN). Returns status and body.
-fn get(url: &str) -> Result<(u32, Vec<u8>), String> {
+/// Redirects are followed only when asked. The tag lookup needs the Location header, while
+/// downloads come from GitHub's CDN and need the redirect followed.
+fn request(url: &str, follow_redirects: bool) -> Result<Response, String> {
     struct Handle(*mut c_void);
     impl Drop for Handle {
         fn drop(&mut self) {
@@ -215,7 +230,7 @@ fn get(url: &str) -> Result<(u32, Vec<u8>), String> {
         .map_or((rest, "/".to_string()), |(h, p)| (h, format!("/{p}")));
     unsafe {
         let session = Handle(WinHttpOpen(
-            &HSTRING::from(format!("OpenCrosshair/{VERSION}")), // GitHub's API requires a User-Agent
+            &HSTRING::from(format!("OpenCrosshair/{VERSION}")), // identifies us to GitHub
             WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
             PCWSTR::null(),
             PCWSTR::null(),
@@ -245,6 +260,15 @@ fn get(url: &str) -> Result<(u32, Vec<u8>), String> {
         if req.0.is_null() {
             return Err(err("WinHttpOpenRequest"));
         }
+        if !follow_redirects {
+            // Keep the 302 so its Location header can be read.
+            WinHttpSetOption(
+                Some(req.0 as *const c_void),
+                WINHTTP_OPTION_DISABLE_FEATURE,
+                Some(&WINHTTP_DISABLE_REDIRECTS.to_ne_bytes()),
+            )
+            .map_err(|e| format!("WinHttpSetOption: {e}"))?;
+        }
         WinHttpSendRequest(req.0, None, None, 0, 0, 0).map_err(offline)?;
         WinHttpReceiveResponse(req.0, std::ptr::null_mut()).map_err(offline)?;
 
@@ -259,6 +283,34 @@ fn get(url: &str) -> Result<(u32, Vec<u8>), String> {
             std::ptr::null_mut(),
         )
         .map_err(|e| e.message())?;
+
+        // Reads a text header such as Location. A header the server didn't send is None.
+        let header = |what: u32| {
+            let mut bytes = 0u32;
+            // The first call only reports how long the value is.
+            let _ = WinHttpQueryHeaders(
+                req.0,
+                what,
+                PCWSTR::null(),
+                None,
+                &mut bytes,
+                std::ptr::null_mut(),
+            );
+            let mut buf = vec![0u16; bytes as usize / 2 + 1];
+            WinHttpQueryHeaders(
+                req.0,
+                what,
+                PCWSTR::null(),
+                Some(buf.as_mut_ptr() as *mut c_void),
+                &mut bytes,
+                std::ptr::null_mut(),
+            )
+            .ok()?;
+            let text = String::from_utf16_lossy(&buf[..bytes as usize / 2]);
+            Some(text.trim_end_matches('\0').to_owned())
+        };
+        let location = header(WINHTTP_QUERY_LOCATION);
+        let content_length = header(WINHTTP_QUERY_CONTENT_LENGTH).and_then(|v| v.parse().ok());
 
         let mut body = Vec::new();
         let mut buf = vec![0u8; 64 * 1024];
@@ -276,7 +328,12 @@ fn get(url: &str) -> Result<(u32, Vec<u8>), String> {
             }
             body.extend_from_slice(&buf[..n as usize]);
         }
-        Ok((status, body))
+        Ok(Response {
+            status,
+            body,
+            location,
+            content_length,
+        })
     }
 }
 
@@ -289,5 +346,36 @@ mod tests {
         assert!(parse("v0.10.0") > parse("0.9.9"));
         assert!(parse("v0.2.0-beta") > parse("0.1.9"));
         assert_eq!(parse("garbage"), (0, 0, 0));
+    }
+
+    #[test]
+    fn tag_from_redirect() {
+        use super::tag_from_location;
+        assert_eq!(
+            tag_from_location("https://github.com/Tu2525/OpenCrosshair/releases/tag/v0.5.0"),
+            Some("v0.5.0")
+        );
+        assert_eq!(
+            tag_from_location("https://github.com/Tu2525/OpenCrosshair/releases"),
+            None
+        );
+        assert_eq!(
+            tag_from_location("https://github.com/Tu2525/OpenCrosshair/releases/tag/"),
+            None
+        );
+        assert_eq!(
+            tag_from_location("https://github.com/x/releases/tag/v1/extra"),
+            None
+        );
+        assert_eq!(tag_from_location("junk"), None);
+    }
+
+    // Needs the network, so it's skipped by default: cargo test -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_latest_tag() {
+        let tag = super::latest_tag().unwrap().unwrap();
+        println!("{tag}");
+        assert!(super::parse(&tag) >= (0, 5, 0));
     }
 }

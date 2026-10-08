@@ -271,13 +271,17 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             .clone();
         let mut show = visible && (!s.only_games || game.is_some() || ours);
         st.fullscreen = game.is_some() && d3d_fullscreen();
-        *STATUS.lock().unwrap() = match game {
+        let status = match game {
             _ if !visible => Status::Hidden,
             Some(g) if st.fullscreen => Status::Fullscreen(g.exe.clone()),
             Some(g) => Status::InGame(g.exe.clone()),
             None if s.only_games => Status::Waiting,
             None => Status::Everywhere,
         };
+        // The settings window shows this, so only a change needs it redrawn.
+        if std::mem::replace(&mut *STATUS.lock().unwrap(), status.clone()) != status {
+            crate::ui::repaint();
+        }
         // The game's own aiming rule if it has one, otherwise the default.
         let rule = s.aim_rule_for(game);
         // Switching apps ends an aim that was in progress (a toggled one would carry over).
@@ -340,6 +344,8 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
                     .is_ok();
                 KEY_OK[i].store(ok, Ordering::Relaxed);
             }
+            // The keybinds card warns when another app owns a key.
+            crate::ui::repaint();
             st.keys[i] = hk;
         }
     }

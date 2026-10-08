@@ -147,9 +147,10 @@ button's state; it never installs an input hook.
 Pictures are decoded by the Windows Imaging Component that ships with Windows, so there's no image
 library in the exe either.
 
-The settings window uses [egui](https://github.com/emilk/egui). With it open the app uses about 28 MB,
-mostly the window's OpenGL context and fonts. When it's hidden those pages sit untouched, so the app
-hands them back to Windows and drops to a few MB or less until you open the window again.
+The settings window uses [egui](https://github.com/emilk/egui). With it open the app uses about 40 MB
+of its own memory, mostly the window's OpenGL context and fonts. Task Manager may show more, because
+its figure includes memory shared with the graphics driver. When it's hidden those pages sit untouched,
+so the app hands them back to Windows and drops to a few MB or less until you open the window again.
 
 The interface is set in Windows' own Segoe UI and Consolas, read from the Windows fonts folder, so no
 font is bundled (egui's built-in fonts take over if those files are missing). Screen reader support

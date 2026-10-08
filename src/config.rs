@@ -272,6 +272,13 @@ pub fn import_bytes(bytes: Vec<u8>, ext: &str) -> std::io::Result<String> {
     Ok(name)
 }
 
+/// Point every aiming rule that switches to `old` at `new`, or at Keep when `new` is None.
+fn retarget_aim(aim: &mut Aim, old: &str, new: Option<&str>) {
+    if matches!(aim, Aim::Preset(n) if n == old) {
+        *aim = new.map_or(Aim::Keep, |n| Aim::Preset(n.into()));
+    }
+}
+
 impl Settings {
     /// The aiming rule in effect for a game: its own if it has one, otherwise the default.
     pub fn aim_rule_for(&self, game: Option<&Game>) -> AimRule {
@@ -310,6 +317,48 @@ impl Settings {
         let tmp = p.with_extension("tmp");
         if std::fs::write(&tmp, serde_json::to_vec(self).unwrap()).is_ok() {
             let _ = std::fs::rename(tmp, p);
+        }
+    }
+
+    /// Rename a preset, and point everything that used the old name at the new one.
+    pub fn rename_preset(&mut self, old: &str, new: &str) -> Result<(), String> {
+        let new = new.trim();
+        if new.is_empty() {
+            return Err("Give it a name.".into());
+        }
+        if new == old {
+            return Ok(());
+        }
+        if self.presets.contains_key(new) {
+            return Err(format!("There's already a preset called {new}."));
+        }
+        let Some(crosshair) = self.presets.remove(old) else {
+            return Err(format!("There's no preset called {old}."));
+        };
+        self.presets.insert(new.into(), crosshair);
+        retarget_aim(&mut self.aim, old, Some(new));
+        for g in &mut self.games {
+            if g.preset == old {
+                g.preset = new.into();
+            }
+            if let Some(rule) = &mut g.aim {
+                retarget_aim(&mut rule.action, old, Some(new));
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete a preset. Anything that used it goes back to the current crosshair, or to Keep.
+    pub fn delete_preset(&mut self, name: &str) {
+        self.presets.remove(name);
+        retarget_aim(&mut self.aim, name, None);
+        for g in &mut self.games {
+            if g.preset == name {
+                g.preset.clear();
+            }
+            if let Some(rule) = &mut g.aim {
+                retarget_aim(&mut rule.action, name, None);
+            }
         }
     }
 }
@@ -351,5 +400,55 @@ mod tests {
         let s: Settings = serde_json::from_str(old).unwrap();
         assert!(s.games[0].aim.is_none());
         assert!(s.aim_rule_for(Some(&s.games[0])).action == Aim::Preset("Dot".into()));
+    }
+
+    /// A preset "Dot", used as the default aim, by a game's crosshair, and by that game's own rule.
+    fn dot_everywhere() -> Settings {
+        let mut s = Settings {
+            aim: Aim::Preset("Dot".into()),
+            ..Default::default()
+        };
+        s.presets.insert("Dot".into(), Crosshair::default());
+        s.games.push(Game {
+            exe: "cs2.exe".into(),
+            preset: "Dot".into(),
+            aim: Some(AimRule {
+                action: Aim::Preset("Dot".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        s
+    }
+
+    #[test]
+    fn renaming_a_preset_repoints_everything_that_used_it() {
+        let mut s = dot_everywhere();
+        s.presets.insert("Cross".into(), Crosshair::default());
+
+        assert!(s.rename_preset("Dot", "  Pip ").is_ok());
+        assert!(s.presets.contains_key("Pip") && !s.presets.contains_key("Dot"));
+        assert!(s.aim == Aim::Preset("Pip".into()));
+        assert!(s.games[0].preset == "Pip");
+        assert!(s.games[0].aim.as_ref().unwrap().action == Aim::Preset("Pip".into()));
+
+        // A name that's taken or empty is refused, and nothing moves.
+        assert_eq!(
+            s.rename_preset("Pip", "Cross"),
+            Err("There's already a preset called Cross.".into())
+        );
+        assert_eq!(s.rename_preset("Pip", "   "), Err("Give it a name.".into()));
+        assert!(s.presets.contains_key("Pip") && s.games[0].preset == "Pip");
+    }
+
+    #[test]
+    fn deleting_a_preset_resets_everything_that_used_it() {
+        let mut s = dot_everywhere();
+        s.delete_preset("Dot");
+
+        assert!(s.presets.is_empty());
+        assert!(s.aim == Aim::Keep);
+        assert!(s.games[0].preset.is_empty());
+        assert!(s.games[0].aim.as_ref().unwrap().action == Aim::Keep);
     }
 }

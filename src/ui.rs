@@ -10,9 +10,14 @@ use eframe::egui::{
 };
 use egui_phosphor::bold as icon;
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Dwm::{
+    DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
+    DwmSetWindowAttribute,
+};
 
 /// Warm monochrome; colour only where it means something. A pair is (background, text).
 struct Palette {
@@ -119,6 +124,22 @@ const COLUMN: f32 = 640.0;
 const PREVIEW_COLUMN: f32 = 400.0;
 const GUTTER: f32 = 32.0;
 const SCROLL_GAP: f32 = 24.0;
+// Label column of the editor grids, so their sliders start at the same x.
+// Just wider than the longest label ("Ring width"), so the cards still fit the narrowest window.
+const LABEL_COL: f32 = 72.0;
+
+/// The settings window's egui context, so other threads can wake it. Set once the window exists.
+static CTX: OnceLock<egui::Context> = OnceLock::new();
+
+/// Redraw the settings window because something it shows changed on another thread. While it's
+/// hidden this does nothing, so the app idles in the tray at zero CPU.
+pub fn repaint() {
+    if let Some(ctx) = CTX.get()
+        && overlay::settings_visible()
+    {
+        ctx.request_repaint();
+    }
+}
 
 pub fn run(
     shared: Arc<Mutex<Settings>>,
@@ -147,6 +168,7 @@ pub fn run(
             style(&cc.egui_ctx);
             cc.egui_ctx.set_theme(theme_preference(local.theme));
             overlay::adopt_settings_window();
+            let _ = CTX.set(cc.egui_ctx.clone());
             Ok(Box::new(App {
                 shared,
                 local,
@@ -166,10 +188,12 @@ pub fn run(
                 last_cell: None,
                 undo: Vec::new(),
                 confirm_delete: None,
+                renaming: None,
                 image_error: None,
                 preset_status: None,
                 open_game: None,
                 dirty: false,
+                caption: None,
             }))
         }),
     )
@@ -180,6 +204,29 @@ fn theme_preference(t: Theme) -> egui::ThemePreference {
         Theme::System => egui::ThemePreference::System,
         Theme::Dark => egui::ThemePreference::Dark,
         Theme::Light => egui::ThemePreference::Light,
+    }
+}
+
+/// Colours the native title bar to match the page. Windows' own caption is a cool blue-grey that
+/// doesn't fit the warm palette. Windows 10 ignores these attributes, which is fine.
+fn colour_title_bar(hwnd: HWND, light: bool) {
+    let p = pal();
+    let colorref = |c: Color32| c.r() as u32 | (c.g() as u32) << 8 | (c.b() as u32) << 16;
+    let attrs = [
+        (DWMWA_USE_IMMERSIVE_DARK_MODE, u32::from(!light)),
+        (DWMWA_CAPTION_COLOR, colorref(p.side)),
+        (DWMWA_TEXT_COLOR, colorref(p.text)),
+        (DWMWA_BORDER_COLOR, colorref(p.border)),
+    ];
+    for (attr, value) in attrs {
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                attr,
+                &value as *const u32 as *const c_void,
+                size_of::<u32>() as u32,
+            );
+        }
     }
 }
 
@@ -277,7 +324,7 @@ fn style(ctx: &egui::Context) {
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = vec2(10.0, 9.0);
         s.spacing.button_padding = vec2(12.0, 6.0);
-        s.spacing.slider_width = 260.0;
+        s.spacing.slider_width = 232.0; // leaves room for "15 cells" at the narrowest window
         s.spacing.interact_size.y = 28.0;
         use egui::TextStyle::*;
         s.text_styles.insert(Heading, FontId::new(28.0, semibold()));
@@ -320,6 +367,8 @@ struct App {
     undo: Vec<(u32, Vec<[u8; 4]>)>,
     /// Preset whose delete button was clicked once; a second click deletes it.
     confirm_delete: Option<String>,
+    /// Preset being renamed: its current name, and the name typed so far.
+    renaming: Option<(String, String)>,
     /// Why the last picture couldn't be used, shown on the Image card.
     image_error: Option<String>,
     /// Result of the last preset export or import, shown on the Presets page.
@@ -327,13 +376,22 @@ struct App {
     /// The game (by exe) whose aiming settings are open on the Games page.
     open_game: Option<String>,
     dirty: bool,
+    /// Theme last applied to the native title bar; None until the window has been found.
+    caption: Option<bool>,
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Colours follow egui's theme, which is Windows' own light/dark setting unless you've
         // picked one in Settings.
-        LIGHT_NOW.store(ui.ctx().theme() == egui::Theme::Light, Ordering::Relaxed);
+        let light = ui.ctx().theme() == egui::Theme::Light;
+        LIGHT_NOW.store(light, Ordering::Relaxed);
+        if self.caption != Some(light)
+            && let Some(hwnd) = overlay::settings_window()
+        {
+            colour_title_bar(hwnd, light);
+            self.caption = Some(light);
+        }
         // eframe shows the window after its first frame no matter what, but it applies viewport
         // commands right after that, so hiding it here means it never reaches the screen.
         if std::mem::take(&mut self.start_hidden) {
@@ -346,13 +404,6 @@ impl eframe::App for App {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
             overlay::hide_settings();
-        }
-        // Status (focused game, update progress) changes outside the UI, so poll it while
-        // someone can see it. Hidden or minimized, the UI doesn't run at all.
-        if overlay::settings_visible()
-            && !ui.ctx().input(|i| i.viewport().minimized.unwrap_or(false))
-        {
-            ui.ctx().request_repaint_after(Duration::from_millis(500));
         }
         let before = self.local.clone();
         // Drop a picture anywhere on the window to use it as the crosshair.
@@ -718,6 +769,48 @@ fn check(
     .inner
 }
 
+/// An on/off switch: a pill with a knob that slides across, accent when on.
+fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let size = vec2(44.0, 24.0);
+    let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            ui.is_enabled(),
+            *on,
+            "Show crosshair",
+        )
+    });
+
+    if ui.is_rect_visible(rect) {
+        let how_on = ui.ctx().animate_bool_responsive(response.id, *on);
+        let p = pal();
+        let (track, knob) = if *on {
+            (p.accent, p.bg)
+        } else {
+            (p.edge, p.muted)
+        };
+        let radius = 0.5 * rect.height();
+        let painter = ui.painter();
+        painter.rect_filled(rect, radius, track);
+        if response.has_focus() {
+            painter.rect_stroke(
+                rect,
+                radius,
+                ui.visuals().selection.stroke,
+                StrokeKind::Outside,
+            );
+        }
+        let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), how_on);
+        painter.circle_filled(pos2(x, rect.center().y), 0.75 * radius, knob);
+    }
+    response
+}
+
 /// Solid button in the text colour: the one primary action on a card. It softens a little on hover
 /// and a little more while pressed.
 fn primary(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Response {
@@ -790,6 +883,39 @@ fn keycap(ui: &mut egui::Ui, text: &str, active: bool) -> egui::Response {
         p.text,
     );
     resp
+}
+
+/// Six one-click colours for the usual picks, beside a colour button. Keeps the alpha.
+fn swatches(ui: &mut egui::Ui, colour: &mut [u8; 4]) {
+    const PICKS: [(&str, [u8; 3]); 6] = [
+        ("Green", [0, 255, 0]),
+        ("Cyan", [0, 255, 255]),
+        ("Yellow", [255, 255, 0]),
+        ("Magenta", [255, 0, 255]),
+        ("Red", [255, 0, 0]),
+        ("White", [255, 255, 255]),
+    ];
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (name, rgb) in PICKS {
+            let (rect, mut resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
+            let ring = rect.expand(2.0);
+            let p = ui.painter();
+            p.rect_filled(rect, 4, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+            p.rect_stroke(rect, 4, Stroke::new(1.0, pal().edge), StrokeKind::Inside);
+            if colour[..3] == rgb || resp.hovered() {
+                p.rect_stroke(ring, 6, Stroke::new(2.0, pal().text), StrokeKind::Outside);
+            }
+            if resp.has_focus() {
+                p.rect_stroke(ring, 6, ui.visuals().selection.stroke, StrokeKind::Outside);
+            }
+            if resp.clicked() {
+                colour[..3].copy_from_slice(&rgb);
+                resp.mark_changed();
+            }
+            name_it(resp, name).on_hover_text(name);
+        }
+    });
 }
 
 /// A rendered crosshair, and where its centre is inside the texture.
@@ -956,6 +1082,7 @@ impl App {
                 self.page = p;
                 self.listening = None;
                 self.confirm_delete = None;
+                self.renaming = None;
             }
         }
 
@@ -973,28 +1100,33 @@ impl App {
                     pal().yellow,
                     format!("{}: can't see it? Use borderless.", game_name(&exe)),
                 ),
-                Status::Waiting => ("Waiting", pal().yellow, "No game in focus".to_string()),
-                Status::Hidden => ("Hidden", pal().gray, format!("{toggle} shows it again")),
-                Status::Everywhere => ("Everywhere", pal().blue, "On top of all apps".to_string()),
+                Status::Waiting => (
+                    "Waiting",
+                    pal().gray,
+                    "Shows when one of your games is in front".to_string(),
+                ),
+                Status::Hidden => ("Hidden", pal().gray, format!("Press {toggle} to show it")),
+                Status::Everywhere => (
+                    "Everywhere",
+                    pal().blue,
+                    "Showing over every app".to_string(),
+                ),
             };
             ui.label(RichText::new(detail).small().color(pal().muted));
             badge(ui, badge_text, tone);
             ui.add_space(6.0);
 
-            let vis = VISIBLE.load(Ordering::Relaxed);
-            let label = format!(
-                "{}   Overlay {}",
-                icon::POWER,
-                if vis { "on" } else { "off" }
-            );
-            let hint = format!("Toggle: {toggle}");
-            if segment(ui, label, vis, vec2(ui.available_width(), 40.0))
-                .on_hover_text(hint)
-                .clicked()
-            {
-                VISIBLE.store(!vis, Ordering::Relaxed);
-                overlay::refresh();
-            }
+            let mut on = VISIBLE.load(Ordering::Relaxed);
+            // Switch first, left to right: a right_to_left layout (or egui::Sides) inside this
+            // bottom_up column leaves the whole window unpainted.
+            ui.horizontal(|ui| {
+                let hint = format!("Toggle: {toggle}");
+                if switch(ui, &mut on).on_hover_text(hint).changed() {
+                    VISIBLE.store(on, Ordering::Relaxed);
+                    overlay::refresh();
+                }
+                ui.label(RichText::new("Crosshair").semi());
+            });
         });
     }
 
@@ -1085,7 +1217,7 @@ impl App {
         p.text(
             rect.right_bottom() - vec2(12.0, 10.0),
             Align2::RIGHT_BOTTOM,
-            format!("{}×{} px  ·  {zoom:.0}×", size.x, size.y),
+            format!("{}×{} px  ·  shown at {zoom:.0}×", size.x, size.y),
             FontId::monospace(11.0),
             Color32::from_rgb(90, 88, 84),
         );
@@ -1121,6 +1253,7 @@ impl App {
             ui.add_space(4.0);
             egui::Grid::new("image_opts")
                 .num_columns(2)
+                .min_col_width(LABEL_COL)
                 .spacing([20.0, 10.0])
                 .show(ui, |ui| {
                     row(ui, "Size", |ui| {
@@ -1159,6 +1292,7 @@ impl App {
         card(ui, "Canvas", |ui| {
             egui::Grid::new("canvas_opts")
                 .num_columns(2)
+                .min_col_width(LABEL_COL)
                 .spacing([20.0, 10.0])
                 .show(ui, |ui| {
                     let mut n = c.grid;
@@ -1179,6 +1313,13 @@ impl App {
                                 ui.color_edit_button_srgba_unmultiplied(&mut self.brush),
                                 "Brush colour",
                             );
+                            swatches(ui, &mut self.brush);
+                        });
+                    });
+                    // The mirror toggles get their own line: next to the swatches they'd run off
+                    // a narrow window.
+                    row(ui, "", |ui| {
+                        ui.horizontal(|ui| {
                             ui.toggle_value(
                                 &mut self.mirror_x,
                                 format!("{} Mirror X", icon::FLIP_HORIZONTAL),
@@ -1365,20 +1506,11 @@ impl App {
         let s = &mut self.local;
 
         card(ui, "", |ui| {
-            ui.horizontal(|ui| {
-                check(
-                    ui,
-                    &mut s.only_games,
-                    RichText::new("Only show in my games").semi(),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if s.only_games {
-                        badge(ui, "Games only", pal().green)
-                    } else {
-                        badge(ui, "Everywhere", pal().blue)
-                    }
-                });
-            });
+            check(
+                ui,
+                &mut s.only_games,
+                RichText::new("Only show in my games").semi(),
+            );
             let hint = if s.only_games {
                 "Hidden in every other app. It still shows while this window is focused, so you can preview."
             } else {
@@ -1394,25 +1526,6 @@ impl App {
             toggle: s.aim_toggle,
         };
         let preset_names: Vec<String> = s.presets.keys().cloned().collect();
-        card(ui, "While aiming", |ui| {
-            let mut rule = default_rule.clone();
-            aim_controls(ui, "default", &preset_names, &mut rule);
-            (s.aim, s.aim_button, s.aim_toggle) = (rule.action, rule.button, rule.toggle);
-            ui.label(
-                RichText::new(
-                    "For games where you aim down sights. It reads the button's state, with no input hooks.",
-                )
-                .small()
-                .color(pal().muted),
-            );
-            ui.label(
-                RichText::new(
-                    "This is the default. A game can have its own: use the sliders button on its row below.",
-                )
-                .small()
-                .color(pal().muted),
-            );
-        });
 
         card(ui, "My games", |ui| {
             if s.games.is_empty() {
@@ -1437,9 +1550,15 @@ impl App {
                     &g.name
                 };
                 let open = self.open_game.as_deref() == Some(g.exe.as_str());
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    // On a narrow window whole controls move to a second line; the words in them
+                    // don't break ("Windowe / d").
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    // Tighter than the default, so a row still fits a ~1100 px wide window.
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.spacing_mut().button_padding.x = 6.0;
                     // Fixed width, so every row lines up whatever the game is called.
-                    let name_cell = vec2(170.0, 34.0);
+                    let name_cell = vec2(150.0, 34.0);
                     let cell = egui::Layout::left_to_right(egui::Align::Center);
                     ui.allocate_ui_with_layout(name_cell, cell, |ui| {
                         ui.set_min_size(name_cell); // otherwise it shrinks to fit the name
@@ -1458,13 +1577,14 @@ impl App {
                     };
                     egui::ComboBox::from_id_salt(("preset", i))
                         .selected_text(shown)
-                        .width(150.0)
+                        .width(122.0)
                         .show_ui(ui, |ui| {
                             ui.selectable_value(&mut g.preset, String::new(), "Current crosshair");
                             for name in s.presets.keys() {
                                 ui.selectable_value(&mut g.preset, name.clone(), name);
                             }
                         });
+                    // "Windowed", not a longer label: the row has to fit an ~1100 px window.
                     let windowed = check(ui, &mut g.windowed, "Windowed").on_hover_text(
                         "Only for games you play in a window: centres the crosshair on the \
                          game's window instead of the middle of the screen.",
@@ -1479,23 +1599,26 @@ impl App {
                             label.clone(),
                         )
                     });
-                    // This game's own aiming rule: lit up when it has one, filled while open.
+                    // This game's own aiming rule: accent when it has one, filled while open.
                     let custom = g.aim.is_some();
-                    let ink = if open || custom {
-                        pal().accent
+                    let ink = if custom { pal().accent } else { pal().muted };
+                    let caret = if open {
+                        icon::CARET_UP
                     } else {
-                        pal().muted
+                        icon::CARET_DOWN
                     };
-                    let sliders =
-                        egui::Button::new(RichText::new(icon::SLIDERS_HORIZONTAL).color(ink))
-                            .frame_when_inactive(open);
+                    let aim_text = if custom { "Custom aim" } else { "Default aim" };
+                    let text = format!("{aim_text} {caret}");
+                    let btn = egui::Button::new(RichText::new(text).color(ink))
+                        .frame_when_inactive(open)
+                        .min_size(vec2(114.0, 0.0)); // same width either way, so the ✕ lines up
                     let tip = if custom {
                         "This game has its own aiming rule"
                     } else {
                         "Aiming settings for this game"
                     };
-                    let sliders = name_it(ui.add(sliders), format!("Aiming settings for {name}"));
-                    if sliders.on_hover_text(tip).clicked() {
+                    let btn = name_it(ui.add(btn), format!("Aiming settings for {name}"));
+                    if btn.on_hover_text(tip).clicked() {
                         self.open_game = if open { None } else { Some(g.exe.clone()) };
                     }
                     if name_it(ghost(ui, icon::X), format!("Remove {name}"))
@@ -1505,6 +1628,7 @@ impl App {
                         remove = Some(i);
                     }
                 });
+                ui.add_space(2.0); // separates a wrapped row from the next one
                 if open {
                     egui::Frame::new()
                         .fill(pal().field)
@@ -1672,6 +1796,26 @@ impl App {
                     .color(pal().muted),
             );
         });
+
+        card(ui, "While aiming", |ui| {
+            let mut rule = default_rule.clone();
+            aim_controls(ui, "default", &preset_names, &mut rule);
+            (s.aim, s.aim_button, s.aim_toggle) = (rule.action, rule.button, rule.toggle);
+            ui.label(
+                RichText::new(
+                    "For games where you aim down sights. It reads the button's state, with no input hooks.",
+                )
+                .small()
+                .color(pal().muted),
+            );
+            ui.label(
+                RichText::new(
+                    "This is the default for every game. To give one game its own, use Default aim on its row in My games.",
+                )
+                .small()
+                .color(pal().muted),
+            );
+        });
     }
 
     fn presets_page(&mut self, ui: &mut egui::Ui) {
@@ -1719,15 +1863,23 @@ impl App {
         let mut export = None;
         let mut export_all = false;
         let mut import = false;
-        card(ui, "Saved", |ui| {
+        let mut commit_rename = None;
+        card(ui, "", |ui| {
             ui.horizontal(|ui| {
-                if !self.local.presets.is_empty() && ghost(ui, "Export all").clicked() {
-                    export_all = true;
-                }
-                if ghost(ui, "Import").clicked() {
-                    import = true;
-                }
+                ui.label(RichText::new("Saved").size(13.0).semi().color(pal().muted));
+                // Right to left, so Import goes first to sit to the right of Export all.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ghost(ui, &format!("{}  Import", icon::DOWNLOAD_SIMPLE)).clicked() {
+                        import = true;
+                    }
+                    if !self.local.presets.is_empty()
+                        && ghost(ui, &format!("{}  Export all", icon::EXPORT)).clicked()
+                    {
+                        export_all = true;
+                    }
+                });
             });
+            ui.add_space(6.0);
             if let Some(s) = &self.preset_status {
                 ui.label(RichText::new(s).small().color(pal().muted));
             }
@@ -1748,8 +1900,35 @@ impl App {
                         let t = texture(&mut self.textures, ui.ctx(), &format!("preset:{name}"), c);
                         thumb(ui, &t, 56.0);
                         ui.vertical(|ui| {
-                            ui.set_min_width(180.0); // grid cells start narrow; don't wrap names
-                            ui.label(RichText::new(name).semi());
+                            ui.set_min_width(140.0); // grid cells start narrow; don't wrap names
+                            match &mut self.renaming {
+                                Some((old, text)) if old == name => {
+                                    let r = ui.add(
+                                        egui::TextEdit::singleline(&mut *text).desired_width(140.0),
+                                    );
+                                    if !r.has_focus() && !r.lost_focus() {
+                                        r.request_focus(); // once, as it appears
+                                    }
+                                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                        self.renaming = None;
+                                    } else if r.lost_focus() {
+                                        commit_rename = Some((old.clone(), text.clone()));
+                                        self.renaming = None;
+                                    }
+                                }
+                                _ => {
+                                    let r = ui.add(
+                                        egui::Label::new(RichText::new(name).semi())
+                                            .sense(Sense::click()),
+                                    );
+                                    if name_it(r, format!("Rename {name}"))
+                                        .on_hover_text("Click to rename")
+                                        .clicked()
+                                    {
+                                        self.renaming = Some((name.clone(), name.clone()));
+                                    }
+                                }
+                            }
                             let kind = match c.mode {
                                 Mode::Lines => "Lines".to_string(),
                                 Mode::Pixels => format!("Pixel {0}×{0}", c.grid),
@@ -1763,7 +1942,7 @@ impl App {
                                 RichText::new(format!("{}  In use", icon::CHECK))
                                     .color(pal().green.1),
                             );
-                        } else if name_it(primary(ui, true, "Load"), format!("Load {name}"))
+                        } else if name_it(ui.add(egui::Button::new("Load")), format!("Load {name}"))
                             .clicked()
                         {
                             load = Some(name.clone());
@@ -1810,6 +1989,20 @@ impl App {
                     }
                 });
         });
+        if let Some((old, new)) = commit_rename {
+            match self.local.rename_preset(&old, &new) {
+                Ok(()) => {
+                    self.textures.remove(&format!("preset:{old}"));
+                    if self.preset_name == old {
+                        self.preset_name = new.trim().into();
+                    }
+                    if self.confirm_delete.as_ref() == Some(&old) {
+                        self.confirm_delete = None;
+                    }
+                }
+                Err(e) => self.preset_status = Some(e),
+            }
+        }
         if let Some(n) = export {
             let one = BTreeMap::from([(n.clone(), self.local.presets[&n].clone())]);
             // Windows won't take these in a file name, and a preset name can hold any of them.
@@ -1832,17 +2025,8 @@ impl App {
         }
         if let Some(n) = delete {
             self.confirm_delete = None;
-            self.local.presets.remove(&n);
+            self.local.delete_preset(&n);
             self.textures.remove(&format!("preset:{n}"));
-            for g in &mut self.local.games {
-                if g.preset == n {
-                    g.preset.clear();
-                }
-            }
-            // "Switch to <deleted preset> while aiming" would point at nothing.
-            if self.local.aim == Aim::Preset(n) {
-                self.local.aim = Aim::Keep;
-            }
         }
     }
 
@@ -1974,13 +2158,6 @@ impl App {
                     install::set_autostart(self.autostart);
                     self.autostart = install::autostart(); // show what actually got written
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if self.autostart {
-                        badge(ui, "On", pal().green)
-                    } else {
-                        badge(ui, "Off", pal().gray)
-                    }
-                });
             });
             let menu = overlay::key_name(self.local.menu_key);
             ui.label(
@@ -2059,6 +2236,8 @@ fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
             let fill = ui.label(RichText::new("Fill").color(pal().muted));
             ui.color_edit_button_srgba_unmultiplied(&mut c.color)
                 .labelled_by(fill.id);
+            ui.add_space(8.0);
+            swatches(ui, &mut c.color);
             ui.add_space(20.0);
             let outline = ui.label(RichText::new("Outline").color(pal().muted));
             ui.color_edit_button_srgba_unmultiplied(&mut c.outline_color)
@@ -2068,6 +2247,7 @@ fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
     card(ui, "Lines", |ui| {
         egui::Grid::new("lines")
             .num_columns(2)
+            .min_col_width(LABEL_COL)
             .spacing([20.0, 10.0])
             .show(ui, |ui| {
                 slider(ui, "Length", &mut c.length, 0..=50);
@@ -2082,6 +2262,7 @@ fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
     card(ui, "Dot & circle", |ui| {
         egui::Grid::new("extras")
             .num_columns(2)
+            .min_col_width(LABEL_COL)
             .spacing([20.0, 10.0])
             .show(ui, |ui| {
                 row(ui, "", |ui| {
@@ -2092,7 +2273,7 @@ fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
                     check(ui, &mut c.circle, "Circle");
                 });
                 slider_when(ui, c.circle, "Radius", &mut c.circle_radius, 1..=100);
-                slider_when(ui, c.circle, "Ring", &mut c.circle_thickness, 1..=10);
+                slider_when(ui, c.circle, "Ring width", &mut c.circle_thickness, 1..=10);
             });
     });
 }

@@ -37,6 +37,7 @@ pub static STATUS: Mutex<Status> = Mutex::new(Status::Idle);
 
 fn set(s: Status) {
     *STATUS.lock().unwrap() = s;
+    crate::ui::repaint();
 }
 
 #[derive(Deserialize)]

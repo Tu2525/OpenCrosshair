@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+
+PackageIdentifier: Tu2525.OpenCrosshair
+PackageVersion: 0.5.0
+InstallerType: exe
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+InstallerSwitches:
+  Silent: --silent
+  SilentWithProgress: --silent
+UpgradeBehavior: install
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/Tu2525/OpenCrosshair/releases/download/v0.5.0/OpenCrosshair-Setup.exe
+    InstallerSha256: 674AE319E4AC68BF2924B945BA26BDF4085E9C9A80583B0EEA7A6D356FB399F0
+AppsAndFeaturesEntries:
+  - DisplayName: OpenCrosshair
+    Publisher: OpenCrosshair
+    DisplayVersion: 0.5.0
+ManifestType: installer
+ManifestVersion: 1.12.0

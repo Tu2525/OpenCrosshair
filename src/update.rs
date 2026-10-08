@@ -132,7 +132,18 @@ fn latest_tag() -> Result<Option<String>, String> {
     let location = match probe.location {
         Some(location) => location,
         None if probe.status == 404 => return Ok(None), // no releases published yet
-        None => return Err(format!("GitHub returned HTTP {}", probe.status)),
+        // Shown as "Last check failed: ...", so say it in words; it retries on its own.
+        None if matches!(probe.status, 403 | 429) => {
+            return Err(
+                "GitHub is limiting requests from your network. Trying again in 10 minutes.".into(),
+            );
+        }
+        None => {
+            return Err(format!(
+                "GitHub had a problem (HTTP {}). Trying again in 10 minutes.",
+                probe.status
+            ));
+        }
     };
     // No tag in the redirect means it went to a non-release page: still no release.
     Ok(tag_from_location(&location).map(str::to_owned))

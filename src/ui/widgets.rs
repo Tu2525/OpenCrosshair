@@ -66,14 +66,17 @@ pub(super) fn nav_item(ui: &mut egui::Ui, icon: &str, label: &str, on: bool) -> 
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
     if ui.is_rect_visible(rect) {
         let p = pal();
-        let fill = if on {
+        // Held down gets the stronger fill and hover's ink straight away, so the press shows before
+        // the click lands.
+        let pressed = resp.is_pointer_button_down_on();
+        let fill = if on || pressed {
             p.hover
         } else if resp.hovered() {
             p.field
         } else {
             Color32::TRANSPARENT
         };
-        let ink = if on || resp.hovered() {
+        let ink = if on || resp.hovered() || pressed {
             p.text
         } else {
             p.muted
@@ -230,7 +233,13 @@ pub(super) fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
             );
         }
         let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), how_on);
-        painter.circle_filled(pos2(x, rect.center().y), 0.75 * radius, knob);
+        // Held down, the knob is 2 px wider across, so the press shows at once.
+        let grow = if response.is_pointer_button_down_on() {
+            1.0
+        } else {
+            0.0
+        };
+        painter.circle_filled(pos2(x, rect.center().y), 0.75 * radius + grow, knob);
     }
     response
 }

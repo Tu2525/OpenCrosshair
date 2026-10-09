@@ -593,7 +593,7 @@ impl App {
                     VISIBLE.store(on, Ordering::Relaxed);
                     overlay::refresh();
                 }
-                ui.label(RichText::new("Crosshair").semi());
+                ui.label(RichText::new("Show crosshair").semi());
             });
         });
     }

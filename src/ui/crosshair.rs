@@ -41,11 +41,17 @@ fn swatches(ui: &mut egui::Ui, colour: &mut [u8; 4]) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         for (name, rgb) in PICKS {
-            let (rect, mut resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
+            let (rect, mut resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
             let ring = rect.expand(2.0);
+            // Held down, the chip sinks 1 px inside its ring, which stays put.
+            let body = if resp.is_pointer_button_down_on() {
+                rect.shrink(1.0)
+            } else {
+                rect
+            };
             let p = ui.painter();
-            p.rect_filled(rect, 4, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
-            p.rect_stroke(rect, 4, Stroke::new(1.0, pal().edge), StrokeKind::Inside);
+            p.rect_filled(body, 4, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+            p.rect_stroke(body, 4, Stroke::new(1.0, pal().edge), StrokeKind::Inside);
             if colour[..3] == rgb || resp.hovered() {
                 p.rect_stroke(ring, 6, Stroke::new(2.0, pal().text), StrokeKind::Outside);
             }

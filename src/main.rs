@@ -31,7 +31,8 @@ fn main() -> eframe::Result {
         install::uninstall(flag("--silent"));
         return Ok(());
     }
-    if install::is_setup_exe() {
+    // A silent run always means install, since winget may rename the download.
+    if install::is_setup_exe() || flag("--silent") {
         install::install(flag("--silent"));
         return Ok(());
     }

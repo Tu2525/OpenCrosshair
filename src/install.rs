@@ -218,7 +218,10 @@ pub fn install(silent: bool) {
         set_run_key(&target);
     }
     drop(lock);
-    let _ = Command::new(&target).spawn();
+    // A scripted install shouldn't leave the app running; the user starts it from the Start menu.
+    if !silent {
+        let _ = Command::new(&target).spawn();
+    }
 }
 
 fn create_shortcut(link: &Path, target: &Path) -> windows::core::Result<()> {

@@ -8,6 +8,27 @@ use eframe::egui::{self, RichText, TextureHandle, vec2};
 use egui_phosphor::bold as icon;
 use std::collections::HashMap;
 
+/// A dropdown `width` wide. A long choice ends in "…", and hovering shows it in full.
+/// Unlike `set_max_width`, this moves the whole box to a new line when it doesn't fit.
+fn dropdown(
+    ui: &mut egui::Ui,
+    id: impl egui::AsIdSalt,
+    width: f32,
+    selected: &str,
+    add: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    ui.allocate_ui(vec2(width, ui.spacing().interact_size.y), |ui| {
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(selected)
+            .width(width)
+            .truncate()
+            .show_ui(ui, add)
+            .response
+    })
+    .inner
+    .on_hover_text(selected)
+}
+
 /// The three choices that make up an aiming rule. Used for the default and for a game's own.
 fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimRule) {
     let shown = match &rule.action {
@@ -20,19 +41,15 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
         .spacing([20.0, 10.0])
         .show(ui, |ui| {
             let label = ui.label(RichText::new("When you aim").color(pal().muted));
-            egui::ComboBox::from_id_salt((id, "action"))
-                .selected_text(shown)
-                .width(220.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut rule.action, Aim::Keep, "Keep the crosshair");
-                    ui.selectable_value(&mut rule.action, Aim::Hide, "Hide it");
-                    for name in presets {
-                        let choice = format!("Switch to {name}");
-                        ui.selectable_value(&mut rule.action, Aim::Preset(name.clone()), choice);
-                    }
-                })
-                .response
-                .labelled_by(label.id);
+            dropdown(ui, (id, "action"), 220.0, &shown, |ui| {
+                ui.selectable_value(&mut rule.action, Aim::Keep, "Keep the crosshair");
+                ui.selectable_value(&mut rule.action, Aim::Hide, "Hide it");
+                for name in presets {
+                    let choice = format!("Switch to {name}");
+                    ui.selectable_value(&mut rule.action, Aim::Preset(name.clone()), choice);
+                }
+            })
+            .labelled_by(label.id);
             ui.end_row();
 
             // With "Keep the crosshair" nothing changes while aiming, so these two do nothing.
@@ -196,41 +213,49 @@ impl App {
                     &g.name
                 };
                 let open = self.open_game.as_deref() == Some(g.exe.as_str());
-                ui.horizontal_wrapped(|ui| {
-                    // On a narrow window whole controls move to a second line; the words in them
-                    // don't break ("Windowe / d").
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    // Tighter than the default, so a row still fits a ~1100 px wide window.
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.spacing_mut().button_padding.x = 6.0;
-                    // Fixed width, so every row lines up whatever the game is called.
-                    let name_cell = vec2(150.0, 34.0);
-                    let cell = egui::Layout::left_to_right(egui::Align::Center);
-                    ui.allocate_ui_with_layout(name_cell, cell, |ui| {
-                        ui.set_min_size(name_cell); // otherwise it shrinks to fit the name
+                // Two lines per game: the name with ✕ at the far right, then the settings
+                // indented under the name.
+                egui::Sides::new().shrink_left().truncate().show(
+                    ui,
+                    |ui| {
                         app_icon(ui, info, 24.0);
                         let full = if g.path.is_empty() { &g.exe } else { &g.path };
                         ui.add(egui::Label::new(RichText::new(name).semi()).truncate())
                             .on_hover_text(full);
-                    });
+                    },
+                    |ui| {
+                        if name_it(ghost(ui, icon::X), format!("Remove {name}"))
+                            .on_hover_text("Remove")
+                            .clicked()
+                        {
+                            remove = Some(i);
+                        }
+                    },
+                );
+                ui.horizontal_wrapped(|ui| {
+                    // On a narrow window whole controls move to a new line; the words in them
+                    // don't break ("Windowe / d").
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    // Tighter than the default, so more fits on a line.
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.spacing_mut().button_padding.x = 6.0;
+                    ui.add_space(30.0); // the icon and its spacing, so this starts under the name
                     let c = s.presets.get(&g.preset).unwrap_or(&s.crosshair);
                     let t = texture(&mut self.textures, ui.ctx(), &format!("game:{}", g.exe), c);
                     thumb(ui, &t, 34.0);
+                    // Owned, because the menu below changes g.preset.
                     let shown = if g.preset.is_empty() {
-                        "Current crosshair"
+                        "Current crosshair".to_string()
                     } else {
-                        g.preset.as_str()
+                        g.preset.clone()
                     };
-                    egui::ComboBox::from_id_salt(("preset", i))
-                        .selected_text(shown)
-                        .width(122.0)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut g.preset, String::new(), "Current crosshair");
-                            for name in s.presets.keys() {
-                                ui.selectable_value(&mut g.preset, name.clone(), name);
-                            }
-                        });
-                    // "Windowed", not a longer label: the row has to fit an ~1100 px window.
+                    dropdown(ui, ("preset", i), 160.0, &shown, |ui| {
+                        ui.selectable_value(&mut g.preset, String::new(), "Current crosshair");
+                        for name in s.presets.keys() {
+                            ui.selectable_value(&mut g.preset, name.clone(), name);
+                        }
+                    });
+                    // "Windowed", not a longer label, so the settings line stays short.
                     let windowed = check(ui, &mut g.windowed, "Windowed").on_hover_text(
                         "Only for games you play in a window: centres the crosshair on the \
                          game's window instead of the middle of the screen.",
@@ -255,9 +280,8 @@ impl App {
                     };
                     let aim_text = if custom { "Custom aim" } else { "Default aim" };
                     let text = format!("{aim_text} {caret}");
-                    let btn = egui::Button::new(RichText::new(text).color(ink))
-                        .frame_when_inactive(open)
-                        .min_size(vec2(114.0, 0.0)); // same width either way, so the ✕ lines up
+                    let btn =
+                        egui::Button::new(RichText::new(text).color(ink)).frame_when_inactive(open);
                     let tip = if custom {
                         "This game has its own aiming rule"
                     } else {
@@ -267,14 +291,8 @@ impl App {
                     if btn.on_hover_text(tip).clicked() {
                         self.open_game = if open { None } else { Some(g.exe.clone()) };
                     }
-                    if name_it(ghost(ui, icon::X), format!("Remove {name}"))
-                        .on_hover_text("Remove")
-                        .clicked()
-                    {
-                        remove = Some(i);
-                    }
                 });
-                ui.add_space(2.0); // separates a wrapped row from the next one
+                ui.add_space(8.0); // separates one game from the next
                 if open {
                     egui::Frame::new()
                         .fill(pal().field)

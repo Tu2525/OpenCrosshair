@@ -4,7 +4,7 @@ use super::widgets::{
 use super::{App, Semi, pal};
 use crate::config::{Crosshair, Mode};
 use crate::{overlay, picture, share};
-use eframe::egui::{self, RichText, Sense};
+use eframe::egui::{self, Align2, FontId, RichText, Sense, vec2};
 use egui_phosphor::bold as icon;
 use std::collections::BTreeMap;
 
@@ -42,6 +42,12 @@ impl App {
                 )
                 .clicked()
                 {
+                    let verb = if self.local.presets.contains_key(&name) {
+                        "Updated"
+                    } else {
+                        "Saved"
+                    };
+                    self.preset_status = Some(format!("{verb} {name}."));
                     self.local
                         .presets
                         .insert(name, self.local.crosshair.clone());
@@ -112,6 +118,16 @@ impl App {
                                         egui::Label::new(RichText::new(name).semi())
                                             .sense(Sense::click()),
                                     );
+                                    // Nothing else hints that the name can be clicked.
+                                    if r.hovered() {
+                                        ui.painter().text(
+                                            r.rect.right_center() + vec2(6.0, 0.0),
+                                            Align2::LEFT_CENTER,
+                                            icon::PENCIL_SIMPLE,
+                                            FontId::proportional(13.0),
+                                            pal().muted,
+                                        );
+                                    }
                                     if name_it(r, format!("Rename {name}"))
                                         .on_hover_text("Click to rename")
                                         .clicked()

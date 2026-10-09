@@ -324,7 +324,7 @@ impl App {
                 if self.open_game.as_deref() == Some(s.games[i].exe.as_str()) {
                     self.open_game = None;
                 }
-                s.games.remove(i);
+                self.removed_game = Some((i, s.games.remove(i)));
             }
             // Fullscreen optimizations switched off means true exclusive fullscreen, where no
             // overlay can show. Say so, and fix it when it's our account's setting.
@@ -361,9 +361,27 @@ impl App {
                     info.fso = apps::Fso::On;
                 }
             }
+            // A removal is one click, so offer one line to take it back.
+            let mut undo = false;
+            if let Some((_, g)) = &self.removed_game {
+                let name = if g.name.is_empty() {
+                    apps::display_name(&g.exe, "", "")
+                } else {
+                    g.name.clone()
+                };
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    hint(ui, format!("Removed {name}."));
+                    undo = name_it(ghost(ui, "Undo"), format!("Undo removing {name}")).clicked();
+                });
+            }
+            if undo && let Some((i, g)) = self.removed_game.take() {
+                s.games.insert(i.min(s.games.len()), g);
+            }
         });
 
-        let add = |games: &mut Vec<Game>, exe: &str, path: &str, name: &str| {
+        // Says whether it added a game, so pressing Enter on an empty box keeps the Undo line.
+        let add = |games: &mut Vec<Game>, exe: &str, path: &str, name: &str| -> bool {
             let exe = exe.trim().to_lowercase();
             // "cs2" works as well as "cs2.exe".
             let exe = if exe.is_empty() || exe.ends_with(".exe") {
@@ -371,7 +389,8 @@ impl App {
             } else {
                 format!("{exe}.exe")
             };
-            if !exe.is_empty() && !games.iter().any(|g| g.exe == exe) {
+            let new = !exe.is_empty() && !games.iter().any(|g| g.exe == exe);
+            if new {
                 games.push(Game {
                     exe,
                     name: name.to_string(),
@@ -379,6 +398,7 @@ impl App {
                     ..Default::default()
                 });
             }
+            new
         };
         card(ui, "Add a game", |ui| {
             ui.horizontal(|ui| {
@@ -404,7 +424,9 @@ impl App {
                     });
                 if let Some(app) = picked.map(|i| &self.running[i]) {
                     let name = app_info(&mut self.apps, ui.ctx(), app).name.clone();
-                    add(&mut s.games, &app.exe, &app.path, &name);
+                    if add(&mut s.games, &app.exe, &app.path, &name) {
+                        self.removed_game = None;
+                    }
                 }
                 if ghost(ui, &format!("{}  Refresh", icon::ARROWS_CLOCKWISE)).clicked() {
                     self.running = apps::running();
@@ -425,7 +447,9 @@ impl App {
                 .clicked()
                     || enter
                 {
-                    add(&mut s.games, &self.game_input, "", "");
+                    if add(&mut s.games, &self.game_input, "", "") {
+                        self.removed_game = None;
+                    }
                     self.game_input.clear();
                 }
             });

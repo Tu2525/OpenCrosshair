@@ -194,6 +194,7 @@ pub fn run(
                 image_error: None,
                 preset_status: None,
                 open_game: None,
+                removed_game: None,
                 dirty: false,
                 caption: None,
             }))
@@ -377,6 +378,8 @@ struct App {
     preset_status: Option<String>,
     /// The game (by exe) whose aiming settings are open on the Games page.
     open_game: Option<String>,
+    /// The game last removed from the Games page, with its old position, until Undo or a change.
+    removed_game: Option<(usize, crate::config::Game)>,
     dirty: bool,
     /// Theme last applied to the native title bar; None until the window has been found.
     caption: Option<bool>,
@@ -551,6 +554,7 @@ impl App {
                 self.listening = None;
                 self.confirm_delete = None;
                 self.renaming = None;
+                self.removed_game = None;
             }
         }
 

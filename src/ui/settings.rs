@@ -51,7 +51,8 @@ impl App {
             }
         }
         card(ui, "Appearance", |ui| {
-            ui.horizontal(|ui| {
+            // Wraps onto a second line when the text size leaves no room for three across.
+            ui.horizontal_wrapped(|ui| {
                 for (t, ic, name) in [
                     (Theme::System, icon::MONITOR, "System"),
                     (Theme::Light, icon::SUN, "Light"),
@@ -133,11 +134,19 @@ impl App {
                     self.autostart = install::autostart(); // show what actually got written
                 }
             });
-            let menu = overlay::key_name(self.local.menu_key);
+            // An unbound key would read "Press Not set", so leave it out.
+            let how = if self.local.menu_key.vk == 0 {
+                "Click the tray icon for settings.".to_string()
+            } else {
+                format!(
+                    "Press {} or click the tray icon for settings.",
+                    overlay::key_name(self.local.menu_key)
+                )
+            };
             hint(
                 ui,
                 format!(
-                    "{}  Starts quietly when you log in, in the tray. Press {menu} or click the tray icon for settings.",
+                    "{}  Starts quietly when you log in, in the tray. {how}",
                     icon::ROCKET_LAUNCH
                 ),
             );

@@ -569,6 +569,18 @@ pub fn capture_key() -> Option<Option<Hotkey>> {
     None
 }
 
+/// The lParam GetKeyNameTextW expects: scan code in bits 16-23, bit 24 set for extended keys.
+/// Num Lock and Pause share scan code 0x45 and MapVirtualKey reports their extended bit the
+/// wrong way round, so those two are fixed up here.
+fn key_name_lparam(vk: u32, scan_ex: u32) -> i32 {
+    let extended = match vk {
+        0x90 => true,  // VK_NUMLOCK
+        0x13 => false, // VK_PAUSE
+        _ => scan_ex & 0xE000 != 0,
+    };
+    (((scan_ex & 0xFF) << 16) | if extended { 1 << 24 } else { 0 }) as i32
+}
+
 pub fn key_name(hk: Hotkey) -> String {
     if hk.vk == 0 {
         return "Not set".into();
@@ -581,9 +593,8 @@ pub fn key_name(hk: Hotkey) -> String {
     }
     unsafe {
         let sc = MapVirtualKeyW(hk.vk, MAPVK_VK_TO_VSC_EX);
-        let lparam = ((sc & 0xFF) << 16) | if sc & 0xE000 != 0 { 1 << 24 } else { 0 };
         let mut buf = [0u16; 32];
-        let n = GetKeyNameTextW(lparam as i32, &mut buf);
+        let n = GetKeyNameTextW(key_name_lparam(hk.vk, sc), &mut buf);
         if n > 0 {
             s += &String::from_utf16_lossy(&buf[..n as usize]);
         } else {
@@ -685,7 +696,30 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRES
 
 #[cfg(test)]
 mod tests {
-    use super::next_aim;
+    use super::{key_name, key_name_lparam, next_aim};
+    use crate::config::Hotkey;
+
+    #[test]
+    fn key_name_lparam_extended_bit() {
+        const EXT: i32 = 1 << 24;
+        // Whichever scan code MapVirtualKey hands back, Num Lock is extended and Pause isn't.
+        for scan in [0x45, 0xE045] {
+            assert_ne!(key_name_lparam(0x90, scan) & EXT, 0, "Num Lock");
+            assert_eq!(key_name_lparam(0x13, scan) & EXT, 0, "Pause");
+        }
+        assert_ne!(
+            key_name_lparam(0x25, 0xE04B) & EXT,
+            0,
+            "arrow keys are extended"
+        );
+        assert_eq!(key_name_lparam(0x41, 0x1E), 0x001E_0000, "A is unchanged");
+    }
+
+    #[test]
+    fn num_lock_and_pause_are_named_differently() {
+        let key = |vk| Hotkey { vk, mods: 0 };
+        assert_ne!(key_name(key(0x90)), key_name(key(0x13)));
+    }
 
     #[test]
     fn aim_hold_and_toggle() {

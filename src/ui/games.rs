@@ -84,7 +84,7 @@ fn describe_aim(rule: &AimRule) -> String {
 
 /// What the games list shows for an app.
 pub(super) struct AppInfo {
-    name: String,
+    pub(super) name: String,
     icon: Option<TextureHandle>,
     fso: apps::Fso,
 }

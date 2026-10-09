@@ -7,6 +7,7 @@ mod widgets;
 use crate::config::{Crosshair, Settings, Theme};
 use crate::overlay::{self, Status, VISIBLE};
 use crate::{apps, install};
+use eframe::egui::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
 use eframe::egui::{self, Color32, CornerRadius, FontId, RichText, Stroke, vec2};
 use egui_phosphor::bold as icon;
 use games::AppInfo;
@@ -157,6 +158,9 @@ const SCROLL_GAP: f32 = 24.0;
 // Label column of the editor grids, so their sliders start at the same x.
 // Just wider than the longest label ("Ring width"), so the cards still fit the narrowest window.
 const LABEL_COL: f32 = 72.0;
+// Logo and pages take about 240 pt and the status block about 140, plus a gap. Shorter than this
+// and the status follows the pages instead of sitting at the bottom.
+const SIDEBAR_HEIGHT: f32 = 400.0;
 
 /// The settings window's egui context, so other threads can wake it. Set once the window exists.
 static CTX: OnceLock<egui::Context> = OnceLock::new();
@@ -228,6 +232,7 @@ pub fn run(
                 removed_game: None,
                 dirty: false,
                 caption: None,
+                extra_fonts: [false; 2],
             }))
         }),
     )
@@ -363,6 +368,34 @@ fn system_font(file: &str) -> Option<Arc<egui::FontData>> {
     Some(Arc::new(egui::FontData::from_owned(bytes)))
 }
 
+/// A font for scripts Segoe UI lacks: its key, its file in Windows' font folder, and which
+/// characters need it.
+type Fallback = (&'static str, &'static str, fn(char) -> bool);
+
+/// Loaded the first time a name uses one of its characters: they're large (msyh.ttc is about
+/// 20 MB) and most people never need them.
+const EXTRA_FONTS: [Fallback; 2] = [
+    // Chinese and Japanese
+    ("yahei", "msyh.ttc", |c| {
+        matches!(
+            c,
+            '\u{2E80}'..='\u{312F}'
+                | '\u{3190}'..='\u{9FFF}'
+                | '\u{F900}'..='\u{FAFF}'
+                | '\u{FF00}'..='\u{FFEF}'
+        )
+    }),
+    // Korean
+    ("malgun", "malgun.ttf", |c| {
+        matches!(
+            c,
+            '\u{1100}'..='\u{11FF}'
+                | '\u{3130}'..='\u{318F}'
+                | '\u{AC00}'..='\u{D7AF}'
+        )
+    }),
+];
+
 fn fonts() -> egui::FontDefinitions {
     use egui::FontFamily::{Monospace, Proportional};
     let mut fonts = egui::FontDefinitions::default();
@@ -469,6 +502,8 @@ struct App {
     dirty: bool,
     /// Theme last applied to the native title bar; None until the window has been found.
     caption: Option<bool>,
+    /// Which of EXTRA_FONTS have been tried, so each is looked for at most once.
+    extra_fonts: [bool; 2],
 }
 
 impl eframe::App for App {
@@ -504,6 +539,38 @@ impl eframe::App for App {
         if let Some(path) = dropped {
             self.use_image(&path);
         }
+        // A fallback is added the first time a shown name needs it. It's marked as tried even if
+        // the file is missing, so it isn't looked for every frame.
+        for (i, (key, file, needs)) in EXTRA_FONTS.iter().enumerate() {
+            if self.extra_fonts[i] {
+                continue;
+            }
+            let shown = self
+                .local
+                .presets
+                .keys()
+                .map(String::as_str)
+                .chain(self.local.games.iter().map(|g| g.name.as_str()))
+                .chain(self.apps.values().map(|a| a.name.as_str()))
+                .chain([self.preset_name.as_str(), self.game_input.as_str()])
+                .chain(self.renaming.as_ref().map(|(_, new)| new.as_str()));
+            if !shown.flat_map(str::chars).any(*needs) {
+                continue;
+            }
+            self.extra_fonts[i] = true;
+            if let Some(data) = system_font(file) {
+                let lowest = |family| InsertFontFamily {
+                    family,
+                    priority: FontPriority::Lowest,
+                };
+                ui.ctx().add_font(FontInsert::new(
+                    key,
+                    Arc::unwrap_or_clone(data),
+                    vec![lowest(egui::FontFamily::Proportional), lowest(semibold())],
+                ));
+                ui.ctx().request_repaint();
+            }
+        }
 
         egui::Panel::left("nav")
             .exact_size(210.0)
@@ -531,8 +598,10 @@ impl eframe::App for App {
                 let side = self.page == Page::Crosshair
                     && full >= COLUMN + SCROLL_GAP + GUTTER + PREVIEW_COLUMN + 48.0;
                 // Otherwise the heading and a smaller preview stay put at the top, and only the
-                // controls below them scroll, so you can watch the crosshair while you drag.
-                let sticky = self.page == Page::Crosshair && !side;
+                // controls below them scroll, so you can watch the crosshair while you drag. On a
+                // short window that header would be the whole page, so it scrolls with the rest.
+                let sticky =
+                    self.page == Page::Crosshair && !side && ui.available_height() >= 600.0;
                 let column = (full - SCROLL_GAP).min(COLUMN);
                 let group = column + SCROLL_GAP + if side { GUTTER + PREVIEW_COLUMN } else { 0.0 };
                 // Centre the content in whatever room the window gives it.
@@ -615,6 +684,23 @@ impl eframe::App for App {
 
 impl App {
     fn nav(&mut self, ui: &mut egui::Ui) {
+        // Pinned to the bottom when there's room. On a short window, or with a large Windows text
+        // size, it follows the pages and the sidebar scrolls instead of drawing over them.
+        if ui.available_height() >= SIDEBAR_HEIGHT {
+            self.pages(ui);
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                self.status(ui, true)
+            });
+        } else {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                self.pages(ui);
+                ui.add_space(22.0);
+                self.status(ui, false);
+            });
+        }
+    }
+
+    fn pages(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(icon::CROSSHAIR)
@@ -643,40 +729,47 @@ impl App {
                 self.removed_game = None;
             }
         }
+    }
 
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            let toggle = overlay::key_name(self.local.toggle_key);
-            let game_name = |exe: &str| {
-                let game = self.local.games.iter().find(|g| g.exe == exe);
-                let name = game.map(|g| g.name.clone()).filter(|n| !n.is_empty());
-                name.unwrap_or_else(|| apps::display_name(exe, "", ""))
-            };
-            let (badge_text, tone, detail) = match overlay::STATUS.lock().unwrap().clone() {
-                Status::InGame(exe) => ("In game", pal().green, game_name(&exe)),
-                Status::Fullscreen(exe) => (
-                    "Fullscreen",
-                    pal().yellow,
-                    format!("{}: can't see it? Use borderless.", game_name(&exe)),
-                ),
-                Status::Waiting => (
-                    "Waiting",
-                    pal().gray,
-                    "Shows when one of your games is in front".to_string(),
-                ),
-                Status::Hidden => ("Hidden", pal().gray, format!("Press {toggle} to show it")),
-                Status::Everywhere => (
-                    "Everywhere",
-                    pal().blue,
-                    "Showing over every app".to_string(),
-                ),
-            };
-            hint(ui, detail);
-            badge(ui, badge_text, tone);
-            ui.add_space(6.0);
-
+    fn status(&self, ui: &mut egui::Ui, pinned: bool) {
+        let toggle = overlay::key_name(self.local.toggle_key);
+        let game_name = |exe: &str| {
+            let game = self.local.games.iter().find(|g| g.exe == exe);
+            let name = game.map(|g| g.name.clone()).filter(|n| !n.is_empty());
+            name.unwrap_or_else(|| apps::display_name(exe, "", ""))
+        };
+        let (badge_text, tone, detail) = match overlay::STATUS.lock().unwrap().clone() {
+            Status::InGame(exe) => ("In game", pal().green, game_name(&exe)),
+            Status::Fullscreen(exe) => (
+                "Fullscreen",
+                pal().yellow,
+                format!("{}: can't see it? Use borderless.", game_name(&exe)),
+            ),
+            Status::Waiting => (
+                "Waiting",
+                pal().gray,
+                "Shows when one of your games is in front".to_string(),
+            ),
+            // With no toggle key there's nothing to press, so point at the switch instead.
+            Status::Hidden => (
+                "Hidden",
+                pal().gray,
+                if self.local.toggle_key.vk == 0 {
+                    "Turn it back on with the switch above".to_string()
+                } else {
+                    format!("Press {toggle} to show it")
+                },
+            ),
+            Status::Everywhere => (
+                "Everywhere",
+                pal().blue,
+                "Showing over every app".to_string(),
+            ),
+        };
+        // Switch first, left to right: a right_to_left layout (or egui::Sides) inside the
+        // bottom_up column leaves the whole window unpainted.
+        let switch_row = |ui: &mut egui::Ui| {
             let mut on = VISIBLE.load(Ordering::Relaxed);
-            // Switch first, left to right: a right_to_left layout (or egui::Sides) inside this
-            // bottom_up column leaves the whole window unpainted.
             ui.horizontal(|ui| {
                 let hint = format!("Toggle: {toggle}");
                 if switch(ui, &mut on).on_hover_text(hint).changed() {
@@ -685,13 +778,39 @@ impl App {
                 }
                 ui.label(RichText::new("Show crosshair").semi());
             });
-        });
+        };
+        // Bottom-up adds the first item at the bottom, so the pinned order is the reverse.
+        if pinned {
+            hint(ui, detail);
+            badge(ui, badge_text, tone);
+            ui.add_space(6.0);
+            switch_row(ui);
+        } else {
+            switch_row(ui);
+            ui.add_space(6.0);
+            badge(ui, badge_text, tone);
+            hint(ui, detail);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::zoom_for_percent;
+    use super::{EXTRA_FONTS, zoom_for_percent};
+
+    #[test]
+    fn script_fallbacks_match_only_their_script() {
+        let matches = |c: char| -> Vec<usize> {
+            (0..EXTRA_FONTS.len())
+                .filter(|&i| (EXTRA_FONTS[i].2)(c))
+                .collect()
+        };
+        assert_eq!(matches('準'), vec![0]);
+        assert_eq!(matches('原'), vec![0]);
+        assert_eq!(matches('한'), vec![1]);
+        assert!(matches('A').is_empty());
+        assert!(matches('خ').is_empty());
+    }
 
     #[test]
     fn text_size_percent_becomes_zoom_within_settings_range() {

@@ -1,0 +1,606 @@
+{
+ "crosshair": {
+  "mode": "Lines",
+  "color": [
+   0,
+   255,
+   170,
+   255
+  ],
+  "outline_color": [
+   0,
+   0,
+   0,
+   220
+  ],
+  "outline": 1,
+  "length": 7,
+  "thickness": 2,
+  "gap": 4,
+  "t_style": false,
+  "dot": false,
+  "dot_size": 2,
+  "circle": false,
+  "circle_radius": 10,
+  "circle_thickness": 1,
+  "grid": 15,
+  "scale": 2,
+  "pixels": [],
+  "offset_x": 0,
+  "offset_y": 0
+ },
+ "toggle_key": {
+  "vk": 144,
+  "mods": 7
+ },
+ "menu_key": {
+  "vk": 0,
+  "mods": 0
+ },
+ "presets": {
+  "Classic": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 4,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Bartholomew's tournament preset (v12 final, do not touch)": {
+   "mode": "Lines",
+   "color": [
+    255,
+    225,
+    70,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 4,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Q": {
+   "mode": "Lines",
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 0,
+   "thickness": 2,
+   "gap": 4,
+   "t_style": false,
+   "dot": true,
+   "dot_size": 4,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "AWP 🎯": {
+   "mode": "Lines",
+   "color": [
+    255,
+    80,
+    80,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 3,
+   "thickness": 2,
+   "gap": 6,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "خط رفيع": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    255,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 1,
+   "gap": 4,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "準星 小さい": {
+   "mode": "Lines",
+   "color": [
+    255,
+    0,
+    255,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 4,
+   "thickness": 2,
+   "gap": 4,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Operator — scoped, tiny dot for night maps": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 0,
+   "thickness": 2,
+   "gap": 4,
+   "t_style": false,
+   "dot": true,
+   "dot_size": 1,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Pixel art 64": {
+   "mode": "Pixels",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 4,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 64,
+   "scale": 1,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Missing picture": {
+   "mode": "Image",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 4,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0,
+   "image": "0123456789abcdef.png"
+  },
+  "Scrim 01": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 1,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Scrim 02": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 2,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Scrim 03": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 3,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Scrim 04": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 4,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Scrim 05": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 5,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Scrim 06": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 6,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Scrim 07": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 7,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  },
+  "Scrim 08": {
+   "mode": "Lines",
+   "color": [
+    0,
+    255,
+    170,
+    255
+   ],
+   "outline_color": [
+    0,
+    0,
+    0,
+    220
+   ],
+   "outline": 1,
+   "length": 7,
+   "thickness": 2,
+   "gap": 8,
+   "t_style": false,
+   "dot": false,
+   "dot_size": 2,
+   "circle": false,
+   "circle_radius": 10,
+   "circle_thickness": 1,
+   "grid": 15,
+   "scale": 2,
+   "pixels": [],
+   "offset_x": 0,
+   "offset_y": 0
+  }
+ },
+ "only_games": true,
+ "games": [
+  {
+   "exe": "cod.exe",
+   "name": "Call of Duty®: Modern Warfare® III – Multiplayer",
+   "preset": "Bartholomew's tournament preset (v12 final, do not touch)",
+   "aim": {
+    "action": {
+     "Preset": "Bartholomew's tournament preset (v12 final, do not touch)"
+    },
+    "button": "Back",
+    "toggle": true
+   },
+   "windowed": true,
+   "path": ""
+  },
+  {
+   "exe": "valorant-win64-shipping.exe",
+   "name": "",
+   "preset": "",
+   "path": ""
+  },
+  {
+   "exe": "genshinimpact.exe",
+   "name": "原神",
+   "preset": "準星 小さい",
+   "path": ""
+  },
+  {
+   "exe": "rust.exe",
+   "name": "Rust",
+   "preset": "Q",
+   "path": ""
+  },
+  {
+   "exe": "cs2.exe",
+   "name": "Counter-Strike 2",
+   "preset": "AWP 🎯",
+   "path": "E:\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\bin\\win64\\cs2.exe"
+  },
+  {
+   "exe": "r5apex.exe",
+   "name": "Apex Legends",
+   "preset": "خط رفيع",
+   "path": ""
+  }
+ ],
+ "theme": "Dark",
+ "aim": {
+  "Preset": "Bartholomew's tournament preset (v12 final, do not touch)"
+ },
+ "aim_button": "Forward",
+ "auto_update": true
+}

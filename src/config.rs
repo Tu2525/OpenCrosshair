@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 pub const MAX_GRID: u32 = 64;
 pub const MAX_SCALE: u32 = 8;
 pub const MAX_IMAGE: u32 = 512;
+/// Longest preset name we keep: long enough for real names, short enough for a dropdown.
+pub const MAX_NAME: usize = 64;
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum Mode {

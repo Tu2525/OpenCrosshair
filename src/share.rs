@@ -1,7 +1,7 @@
 //! Preset files: export a set of presets (plus the pictures they use) to one JSON file, and
 //! import such a file back. The UI calls these; nothing here touches the window.
 
-use crate::config::{self, Crosshair, Mode};
+use crate::config::{self, Crosshair, MAX_NAME, Mode};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -69,7 +69,8 @@ pub fn import(
         if out.len() >= MAX_PRESETS {
             break;
         }
-        let base = raw_name.trim();
+        let base: String = raw_name.trim().chars().take(MAX_NAME).collect();
+        let base = base.trim();
         if base.is_empty() {
             continue;
         }
@@ -240,6 +241,14 @@ mod tests {
         let got = import(&text, &existing).unwrap();
         let names: Vec<&str> = got.keys().map(String::as_str).collect();
         assert_eq!(names, ["Classic (2)", "Classic (3)"]);
+    }
+
+    #[test]
+    fn long_names_are_cut_to_the_limit() {
+        let long = "x".repeat(100);
+        let text = export(&presets(&[(long.as_str(), Crosshair::default())]));
+        let got = import(&text, &BTreeMap::new()).unwrap();
+        assert_eq!(got.keys().next().map(|n| n.chars().count()), Some(MAX_NAME));
     }
 
     #[test]

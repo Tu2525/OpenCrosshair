@@ -20,6 +20,13 @@ use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DwmSetWindowAttribute,
 };
+use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
+use windows::Win32::UI::WindowsAndMessaging::{
+    SPI_GETCLIENTAREAANIMATION, SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    SystemParametersInfoW,
+};
+use windows::core::{BOOL, w};
 
 /// Warm monochrome; colour only where it means something. A pair is (background, text).
 struct Palette {
@@ -109,15 +116,36 @@ const LIGHT: Palette = Palette {
     ),
 };
 
+/// Windows' contrast theme: muted text, borders and edges take the full text colour, so nothing
+/// relies on a subtle grey.
+const fn high_contrast(p: Palette) -> Palette {
+    Palette {
+        muted: p.text,
+        border: p.text,
+        edge: p.text,
+        ..p
+    }
+}
+
+const HIGH_DARK: Palette = high_contrast(DARK);
+const HIGH_LIGHT: Palette = high_contrast(LIGHT);
+
 static LIGHT_NOW: AtomicBool = AtomicBool::new(false);
+/// Set once at startup from Windows' contrast theme setting.
+static HIGH_CONTRAST: AtomicBool = AtomicBool::new(false);
 
 /// The colours for whichever theme is showing. Set once per frame from egui's own theme, which
 /// follows Windows unless you've picked one in Settings.
 fn pal() -> &'static Palette {
-    if LIGHT_NOW.load(Ordering::Relaxed) {
-        &LIGHT
-    } else {
-        &DARK
+    palette(LIGHT_NOW.load(Ordering::Relaxed))
+}
+
+fn palette(light: bool) -> &'static Palette {
+    match (light, HIGH_CONTRAST.load(Ordering::Relaxed)) {
+        (false, false) => &DARK,
+        (true, false) => &LIGHT,
+        (false, true) => &HIGH_DARK,
+        (true, true) => &HIGH_LIGHT,
     }
 }
 
@@ -149,6 +177,8 @@ pub fn run(
     hidden: bool,
 ) -> eframe::Result {
     let local = shared.lock().unwrap().clone();
+    let (animations, text_scale, high_contrast) = windows_accessibility();
+    HIGH_CONTRAST.store(high_contrast, Ordering::Relaxed);
     // Drawn by build.rs, same artwork as the exe icon.
     let icon = egui::IconData {
         rgba: include_bytes!(concat!(env!("OUT_DIR"), "/icon-64.rgba")).to_vec(),
@@ -167,7 +197,8 @@ pub fn run(
         overlay::TITLE,
         options,
         Box::new(|cc| {
-            style(&cc.egui_ctx);
+            style(&cc.egui_ctx, animations);
+            cc.egui_ctx.set_zoom_factor(text_scale);
             cc.egui_ctx.set_theme(theme_preference(local.theme));
             overlay::adopt_settings_window();
             let _ = CTX.set(cc.egui_ctx.clone());
@@ -208,6 +239,51 @@ fn theme_preference(t: Theme) -> egui::ThemePreference {
         Theme::Dark => egui::ThemePreference::Dark,
         Theme::Light => egui::ThemePreference::Light,
     }
+}
+
+/// Windows' accessibility settings, read once at startup: animation effects, text size as a zoom
+/// factor, and whether a contrast theme is on. Anything that can't be read keeps its default.
+fn windows_accessibility() -> (bool, f32, bool) {
+    let mut animations = BOOL(1);
+    let mut contrast = HIGHCONTRASTW {
+        cbSize: size_of::<HIGHCONTRASTW>() as u32,
+        ..Default::default()
+    };
+    let mut percent = 100u32;
+    let mut size = size_of::<u32>() as u32;
+    unsafe {
+        let _ = SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some(&mut animations as *mut BOOL as *mut c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        );
+        let _ = SystemParametersInfoW(
+            SPI_GETHIGHCONTRAST,
+            contrast.cbSize,
+            Some(&mut contrast as *mut HIGHCONTRASTW as *mut c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        );
+        let _ = RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!(r"Software\Microsoft\Accessibility"),
+            w!("TextScaleFactor"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut percent as *mut u32 as *mut c_void),
+            Some(&mut size),
+        );
+    }
+    (
+        animations.as_bool(),
+        zoom_for_percent(percent),
+        contrast.dwFlags.contains(HCF_HIGHCONTRASTON),
+    )
+}
+
+/// Windows' text size, a percentage Settings keeps between 100 and 225, as egui's zoom factor.
+fn zoom_for_percent(percent: u32) -> f32 {
+    percent.clamp(100, 225) as f32 / 100.0
 }
 
 /// Colours the native title bar to match the page. Windows' own caption is a cool blue-grey that
@@ -319,11 +395,17 @@ fn fonts() -> egui::FontDefinitions {
     fonts
 }
 
-fn style(ctx: &egui::Context) {
+fn style(ctx: &egui::Context, animations: bool) {
     ctx.set_fonts(fonts());
 
-    ctx.set_visuals_of(egui::Theme::Dark, visuals(egui::Visuals::dark(), &DARK));
-    ctx.set_visuals_of(egui::Theme::Light, visuals(egui::Visuals::light(), &LIGHT));
+    ctx.set_visuals_of(
+        egui::Theme::Dark,
+        visuals(egui::Visuals::dark(), palette(false)),
+    );
+    ctx.set_visuals_of(
+        egui::Theme::Light,
+        visuals(egui::Visuals::light(), palette(true)),
+    );
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = vec2(10.0, 9.0);
         s.spacing.button_padding = vec2(12.0, 6.0);
@@ -335,6 +417,10 @@ fn style(ctx: &egui::Context) {
         s.text_styles.insert(Button, FontId::proportional(14.0));
         s.text_styles.insert(Small, FontId::proportional(12.5)); // 12 is about the floor for legibility
         s.text_styles.insert(Monospace, FontId::monospace(13.5));
+        // Animation effects are off in Windows: hover fades and the switch's slide happen at once.
+        if !animations {
+            s.animation_time = 0.0;
+        }
     });
 }
 
@@ -600,5 +686,20 @@ impl App {
                 ui.label(RichText::new("Show crosshair").semi());
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::zoom_for_percent;
+
+    #[test]
+    fn text_size_percent_becomes_zoom_within_settings_range() {
+        assert_eq!(zoom_for_percent(100), 1.0);
+        assert_eq!(zoom_for_percent(150), 1.5);
+        assert_eq!(zoom_for_percent(225), 2.25);
+        // A value outside the range, or a junk one, lands on the nearest end.
+        assert_eq!(zoom_for_percent(0), 1.0);
+        assert_eq!(zoom_for_percent(u32::MAX), 2.25);
     }
 }

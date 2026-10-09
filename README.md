@@ -199,8 +199,8 @@ The exe ends up in `target/release/OpenCrosshair.exe`. Copy it to a name contain
 Bump `version` in `Cargo.toml`, commit, then tag and push:
 
 ```
-git tag v0.5.5
-git push origin v0.5.5
+git tag v0.5.6
+git push origin v0.5.6
 ```
 
 GitHub Actions builds the release and attaches both exes. Installed copies check every six hours and update themselves.

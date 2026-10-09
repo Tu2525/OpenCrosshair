@@ -25,7 +25,8 @@ before using any overlay in competitive play.
   Games are listed by their real name and icon, read from the game's own exe.
 - **Light and dark themes**. It follows Windows' app mode, or you can pick one in Settings.
 - **Keyboard and screen reader friendly**: every control can be reached with Tab, and the window is
-  exposed to Windows UI Automation, which is what screen readers such as Narrator and NVDA read.
+  exposed to Windows UI Automation, which is what screen readers such as Narrator and NVDA read. It also
+  follows Windows' accessibility settings for animation effects, text size and contrast themes.
 - **Lives in the tray**, out of your way and out of Alt+Tab. Click the icon for the settings.
 - **Rebindable global hotkeys**: F8 toggles the crosshair, F9 opens the settings.
 - **Start with Windows**, straight to the tray.
@@ -198,8 +199,8 @@ The exe ends up in `target/release/OpenCrosshair.exe`. Copy it to a name contain
 Bump `version` in `Cargo.toml`, commit, then tag and push:
 
 ```
-git tag v0.5.2
-git push origin v0.5.2
+git tag v0.5.3
+git push origin v0.5.3
 ```
 
 GitHub Actions builds the release and attaches both exes. Installed copies check every six hours and update themselves.

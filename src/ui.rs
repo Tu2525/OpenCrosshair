@@ -640,7 +640,7 @@ impl eframe::App for App {
                                         match self.page {
                                             Page::Crosshair => {
                                                 if !sticky {
-                                                    self.crosshair_header(ui, false);
+                                                    self.crosshair_header(ui, !side);
                                                 }
                                                 self.crosshair_body(ui);
                                             }

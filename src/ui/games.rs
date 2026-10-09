@@ -232,65 +232,71 @@ impl App {
                         }
                     },
                 );
-                ui.horizontal_wrapped(|ui| {
-                    // On a narrow window whole controls move to a new line; the words in them
-                    // don't break ("Windowe / d").
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    // Tighter than the default, so more fits on a line.
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.spacing_mut().button_padding.x = 6.0;
-                    ui.add_space(30.0); // the icon and its spacing, so this starts under the name
-                    let c = s.presets.get(&g.preset).unwrap_or(&s.crosshair);
-                    let t = texture(&mut self.textures, ui.ctx(), &format!("game:{}", g.exe), c);
-                    thumb(ui, &t, 34.0);
-                    // Owned, because the menu below changes g.preset.
-                    let shown = if g.preset.is_empty() {
-                        "Current crosshair".to_string()
-                    } else {
-                        g.preset.clone()
-                    };
-                    dropdown(ui, ("preset", i), 160.0, &shown, |ui| {
-                        ui.selectable_value(&mut g.preset, String::new(), "Current crosshair");
-                        for name in s.presets.keys() {
-                            ui.selectable_value(&mut g.preset, name.clone(), name);
+                ui.horizontal(|ui| {
+                    // The icon and its spacing, so the settings start under the name. Outside the
+                    // wrapping row, so a wrapped line is indented too.
+                    ui.add_space(30.0);
+                    ui.horizontal_wrapped(|ui| {
+                        // On a narrow window whole controls move to a new line; the words in them
+                        // don't break ("Windowe / d").
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        // Tighter than the default, so more fits on a line.
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.spacing_mut().button_padding.x = 6.0;
+                        let c = s.presets.get(&g.preset).unwrap_or(&s.crosshair);
+                        let t =
+                            texture(&mut self.textures, ui.ctx(), &format!("game:{}", g.exe), c);
+                        thumb(ui, &t, 34.0);
+                        // Owned, because the menu below changes g.preset.
+                        let shown = if g.preset.is_empty() {
+                            "Current crosshair".to_string()
+                        } else {
+                            g.preset.clone()
+                        };
+                        // 140 wide, with the tighter gaps, keeps the line whole in the narrowest window.
+                        dropdown(ui, ("preset", i), 140.0, &shown, |ui| {
+                            ui.selectable_value(&mut g.preset, String::new(), "Current crosshair");
+                            for name in s.presets.keys() {
+                                ui.selectable_value(&mut g.preset, name.clone(), name);
+                            }
+                        });
+                        // "Windowed", not a longer label, so the settings line stays short.
+                        let windowed = check(ui, &mut g.windowed, "Windowed").on_hover_text(
+                            "Only for games you play in a window: centres the crosshair on the \
+                         game's window instead of the middle of the screen.",
+                        );
+                        // Every row says "Windowed", so say which game each belongs to.
+                        let (on, label) = (g.windowed, format!("Windowed: {name}"));
+                        windowed.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::Checkbox,
+                                true,
+                                on,
+                                label.clone(),
+                            )
+                        });
+                        // This game's own aiming rule: accent when it has one, filled while open.
+                        let custom = g.aim.is_some();
+                        let ink = if custom { pal().accent } else { pal().muted };
+                        let caret = if open {
+                            icon::CARET_UP
+                        } else {
+                            icon::CARET_DOWN
+                        };
+                        let aim_text = if custom { "Custom aim" } else { "Default aim" };
+                        let text = format!("{aim_text} {caret}");
+                        let btn = egui::Button::new(RichText::new(text).color(ink))
+                            .frame_when_inactive(open);
+                        let tip = if custom {
+                            "This game has its own aiming rule"
+                        } else {
+                            "Aiming settings for this game"
+                        };
+                        let btn = name_it(ui.add(btn), format!("Aiming settings for {name}"));
+                        if btn.on_hover_text(tip).clicked() {
+                            self.open_game = if open { None } else { Some(g.exe.clone()) };
                         }
                     });
-                    // "Windowed", not a longer label, so the settings line stays short.
-                    let windowed = check(ui, &mut g.windowed, "Windowed").on_hover_text(
-                        "Only for games you play in a window: centres the crosshair on the \
-                         game's window instead of the middle of the screen.",
-                    );
-                    // Every row says "Windowed", so say which game each belongs to.
-                    let (on, label) = (g.windowed, format!("Windowed: {name}"));
-                    windowed.widget_info(|| {
-                        egui::WidgetInfo::selected(
-                            egui::WidgetType::Checkbox,
-                            true,
-                            on,
-                            label.clone(),
-                        )
-                    });
-                    // This game's own aiming rule: accent when it has one, filled while open.
-                    let custom = g.aim.is_some();
-                    let ink = if custom { pal().accent } else { pal().muted };
-                    let caret = if open {
-                        icon::CARET_UP
-                    } else {
-                        icon::CARET_DOWN
-                    };
-                    let aim_text = if custom { "Custom aim" } else { "Default aim" };
-                    let text = format!("{aim_text} {caret}");
-                    let btn =
-                        egui::Button::new(RichText::new(text).color(ink)).frame_when_inactive(open);
-                    let tip = if custom {
-                        "This game has its own aiming rule"
-                    } else {
-                        "Aiming settings for this game"
-                    };
-                    let btn = name_it(ui.add(btn), format!("Aiming settings for {name}"));
-                    if btn.on_hover_text(tip).clicked() {
-                        self.open_game = if open { None } else { Some(g.exe.clone()) };
-                    }
                 });
                 ui.add_space(8.0); // separates one game from the next
                 if open {

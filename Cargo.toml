@@ -11,7 +11,9 @@ name = "OpenCrosshair"
 path = "src/main.rs"
 
 [dependencies]
-eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
+# wgpu, not glow: on a PC without a GPU driver (VMs, winget validation) OpenGL fails and the app exits,
+# while wgpu falls back to Windows' software renderer (WARP).
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "wgpu"] }
 egui-phosphor = { version = "0.14.0", default-features = false, features = ["bold"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

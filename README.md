@@ -1,6 +1,6 @@
 # OpenCrosshair
 
-A crosshair overlay for Windows games. Free, open source, and small: a single 7 MB exe written in
+A crosshair overlay for Windows games. Free, open source, and small: a single 11.3 MB exe written in
 Rust that uses just a few MB of RAM while it sits in the tray.
 
 ![OpenCrosshair settings window](docs/crosshair.png)
@@ -71,7 +71,7 @@ going by each project's own store page or README in October 2026. A dash means t
 
 **Where OpenCrosshair is different**
 
-- **It's light.** One 7 MB exe with no browser engine inside. Simple Sight's install folder, for
+- **It's light.** One  exe with no browser engine inside. Simple Sight's install folder, for
   comparison, is 525 MB; it and CrossOver are built on Electron, which bundles a copy of Chromium.
   OpenCrosshair idles at a few MB of RAM in the tray and uses no measurable CPU while you play.
 - **It's yours to change.** MIT licensed, so you can fork it, ship it, or build it into something else.

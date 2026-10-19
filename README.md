@@ -3,13 +3,15 @@
 A crosshair overlay for Windows games. Free, open source, and small: a single 11.3 MB exe written in
 Rust that uses just a few MB of RAM while it sits in the tray.
 
+<p align="center">
 [![latest](https://img.shields.io/github/v/release/Tu2525/OpenCrosshair?label=latest&color=blueviolet)](https://github.com/Tu2525/OpenCrosshair/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/Tu2525/OpenCrosshair/total?label=downloads&color=blueviolet)](https://github.com/Tu2525/OpenCrosshair/releases)
 [![license](https://img.shields.io/github/license/Tu2525/OpenCrosshair?color=blue)](LICENSE)
 [![stars](https://img.shields.io/github/stars/Tu2525/OpenCrosshair?style=flat&logo=github)](https://github.com/Tu2525/OpenCrosshair)
-
+<br>
 [![Download](https://img.shields.io/badge/%E2%AC%87%20Download-OpenCrosshair--Setup.exe-2ea44f?style=for-the-badge)](https://github.com/Tu2525/OpenCrosshair/releases/latest/download/OpenCrosshair-Setup.exe)
 [![Portable](https://img.shields.io/badge/Portable-OpenCrosshair.exe-555?style=for-the-badge)](https://github.com/Tu2525/OpenCrosshair/releases/latest/download/OpenCrosshair.exe)
+</p>
 
 ![OpenCrosshair settings window](docs/crosshair.png)
 

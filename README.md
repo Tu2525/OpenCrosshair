@@ -4,13 +4,13 @@ A crosshair overlay for Windows games. Free, open source, and small: a single 11
 Rust that uses just a few MB of RAM while it sits in the tray.
 
 <p align="center">
-[![latest](https://img.shields.io/github/v/release/Tu2525/OpenCrosshair?label=latest&color=blueviolet)](https://github.com/Tu2525/OpenCrosshair/releases/latest)
-[![downloads](https://img.shields.io/github/downloads/Tu2525/OpenCrosshair/total?label=downloads&color=blueviolet)](https://github.com/Tu2525/OpenCrosshair/releases)
-[![license](https://img.shields.io/github/license/Tu2525/OpenCrosshair?color=blue)](LICENSE)
-[![stars](https://img.shields.io/github/stars/Tu2525/OpenCrosshair?style=flat&logo=github)](https://github.com/Tu2525/OpenCrosshair)
+<a href="https://github.com/Tu2525/OpenCrosshair/releases/latest"><img src="https://img.shields.io/github/v/release/Tu2525/OpenCrosshair?label=latest&color=blueviolet" alt="latest"></a>
+<a href="https://github.com/Tu2525/OpenCrosshair/releases"><img src="https://img.shields.io/github/downloads/Tu2525/OpenCrosshair/total?label=downloads&color=blueviolet" alt="downloads"></a>
+<a href="LICENSE"><img src="https://img.shields.io/github/license/Tu2525/OpenCrosshair?color=blue" alt="license"></a>
+<a href="https://github.com/Tu2525/OpenCrosshair"><img src="https://img.shields.io/github/stars/Tu2525/OpenCrosshair?style=flat&logo=github" alt="stars"></a>
 <br>
-[![Download](https://img.shields.io/badge/%E2%AC%87%20Download-OpenCrosshair--Setup.exe-2ea44f?style=for-the-badge)](https://github.com/Tu2525/OpenCrosshair/releases/latest/download/OpenCrosshair-Setup.exe)
-[![Portable](https://img.shields.io/badge/Portable-OpenCrosshair.exe-555?style=for-the-badge)](https://github.com/Tu2525/OpenCrosshair/releases/latest/download/OpenCrosshair.exe)
+<a href="https://github.com/Tu2525/OpenCrosshair/releases/latest/download/OpenCrosshair-Setup.exe"><img src="https://img.shields.io/badge/%E2%AC%87%20Download-OpenCrosshair--Setup.exe-2ea44f?style=for-the-badge" alt="Download"></a>
+<a href="https://github.com/Tu2525/OpenCrosshair/releases/latest/download/OpenCrosshair.exe"><img src="https://img.shields.io/badge/Portable-OpenCrosshair.exe-555?style=for-the-badge" alt="Portable"></a>
 </p>
 
 ![OpenCrosshair settings window](docs/crosshair.png)

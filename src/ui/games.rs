@@ -225,7 +225,7 @@ impl App {
                     },
                     |ui| {
                         if name_it(ghost(ui, icon::X), format!("Remove {name}"))
-                            .on_hover_text("Remove")
+                            .on_hover_text(format!("Remove {name}"))
                             .clicked()
                         {
                             remove = Some(i);
@@ -240,8 +240,8 @@ impl App {
                         // On a narrow window whole controls move to a new line; the words in them
                         // don't break ("Windowe / d").
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                        // Tighter than the default, so more fits on a line.
-                        ui.spacing_mut().item_spacing.x = 4.0;
+                        // Roomy enough that the checkbox doesn't sit flush against the dropdown.
+                        ui.spacing_mut().item_spacing.x = 12.0;
                         ui.spacing_mut().button_padding.x = 6.0;
                         let c = s.presets.get(&g.preset).unwrap_or(&s.crosshair);
                         let t =
@@ -253,7 +253,7 @@ impl App {
                         } else {
                             g.preset.clone()
                         };
-                        // 140 wide, with the tighter gaps, keeps the line whole in the narrowest window.
+                        // 140 wide. Wider gaps wrap the whole controls, so the line still breaks cleanly.
                         dropdown(ui, ("preset", i), 140.0, &shown, |ui| {
                             ui.selectable_value(&mut g.preset, String::new(), "Current crosshair");
                             for name in s.presets.keys() {
@@ -276,8 +276,9 @@ impl App {
                             )
                         });
                         // This game's own aiming rule: accent when it has one, filled while open.
+                        // Plain text colour otherwise, so it reads as a link you can press.
                         let custom = g.aim.is_some();
-                        let ink = if custom { pal().accent } else { pal().muted };
+                        let ink = if custom { pal().accent } else { pal().text };
                         let caret = if open {
                             icon::CARET_UP
                         } else {
@@ -292,7 +293,9 @@ impl App {
                         } else {
                             "Aiming settings for this game"
                         };
-                        let btn = name_it(ui.add(btn), format!("Aiming settings for {name}"));
+                        // The frame shows on hover (the button's own hover style); pointer says "click".
+                        let btn = name_it(ui.add(btn), format!("Aiming settings for {name}"))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
                         if btn.on_hover_text(tip).clicked() {
                             self.open_game = if open { None } else { Some(g.exe.clone()) };
                         }

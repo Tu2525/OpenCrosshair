@@ -1,5 +1,6 @@
 use super::widgets::{
-    card, check, draw_fit, form, ghost, heading, hint, name_it, primary, row, segment, texture,
+    action, card, check, draw_fit, form, ghost, heading, hint, name_it, primary, row, segment,
+    texture, toggle,
 };
 use super::{App, Page, pal};
 use crate::config::{self, Crosshair, MAX_GRID, MAX_IMAGE, MAX_SCALE, Mode};
@@ -41,7 +42,7 @@ fn swatches(ui: &mut egui::Ui, colour: &mut [u8; 4]) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         for (name, rgb) in PICKS {
-            let (rect, mut resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
+            let (rect, mut resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
             let ring = rect.expand(2.0);
             // Held down, the chip sinks 1 px inside its ring, which stays put.
             let body = if resp.is_pointer_button_down_on() {
@@ -62,7 +63,9 @@ fn swatches(ui: &mut egui::Ui, colour: &mut [u8; 4]) {
                 colour[..3].copy_from_slice(&rgb);
                 resp.mark_changed();
             }
-            name_it(resp, name).on_hover_text(name);
+            name_it(resp, name)
+                .on_hover_text(name)
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
         }
     });
 }
@@ -152,12 +155,13 @@ impl App {
             zoom = draw_fit(&p, &t, half.center(), fit);
         }
         let size = t.handle.size_vec2();
+        // Drawn on the light half, so the ink is dark enough for 4.5:1 against it.
         p.text(
             rect.right_bottom() - vec2(12.0, 10.0),
             Align2::RIGHT_BOTTOM,
             format!("{}×{} px  ·  shown at {zoom:.0}×", size.x, size.y),
-            FontId::monospace(11.0),
-            Color32::from_rgb(90, 88, 84),
+            FontId::monospace(12.0),
+            Color32::from_rgb(56, 54, 52),
         );
         ui.add_space(16.0);
     }
@@ -249,22 +253,26 @@ impl App {
                 // a narrow window.
                 row(ui, "", |ui| {
                     ui.horizontal(|ui| {
-                        ui.toggle_value(
+                        toggle(
+                            ui,
                             &mut self.mirror_x,
-                            format!("{} Mirror X", icon::FLIP_HORIZONTAL),
+                            &format!("{} Mirror X", icon::FLIP_HORIZONTAL),
                         );
-                        ui.toggle_value(
+                        toggle(
+                            ui,
                             &mut self.mirror_y,
-                            format!("{} Mirror Y", icon::FLIP_VERTICAL),
+                            &format!("{} Mirror Y", icon::FLIP_VERTICAL),
                         );
                     });
                 });
                 row(ui, "", |ui| {
                     ui.horizontal(|ui| {
-                        let undo = egui::Button::new(format!("{}  Undo", icon::ARROW_U_UP_LEFT));
-                        let undo = ui
-                            .add_enabled(!self.undo.is_empty(), undo)
-                            .on_hover_text("Ctrl+Z");
+                        let undo = action(
+                            ui,
+                            !self.undo.is_empty(),
+                            RichText::new(format!("{}  Undo", icon::ARROW_U_UP_LEFT)),
+                        )
+                        .on_hover_text("Ctrl+Z");
                         let ctrl_z =
                             egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
                         let ctrl_z = ui.input_mut(|i| i.consume_shortcut(&ctrl_z));
@@ -415,16 +423,20 @@ impl App {
 
 fn lines_ui(ui: &mut egui::Ui, c: &mut Crosshair) {
     card(ui, "Colour", |ui| {
-        ui.horizontal(|ui| {
+        // Wraps the swatches onto a second line on a narrow window instead of running off the card.
+        ui.horizontal_wrapped(|ui| {
             let fill = ui.label(RichText::new("Fill").color(pal().muted));
             ui.color_edit_button_srgba_unmultiplied(&mut c.color)
                 .labelled_by(fill.id);
             ui.add_space(8.0);
             swatches(ui, &mut c.color);
             ui.add_space(20.0);
-            let outline = ui.label(RichText::new("Outline").color(pal().muted));
-            ui.color_edit_button_srgba_unmultiplied(&mut c.outline_color)
-                .labelled_by(outline.id);
+            // Label and swatch wrap as a pair, so the swatch is never stranded on its own line.
+            ui.horizontal(|ui| {
+                let outline = ui.label(RichText::new("Outline").color(pal().muted));
+                ui.color_edit_button_srgba_unmultiplied(&mut c.outline_color)
+                    .labelled_by(outline.id);
+            });
         });
     });
     card(ui, "Lines", |ui| {

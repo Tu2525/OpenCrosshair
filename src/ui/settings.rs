@@ -91,7 +91,7 @@ impl App {
                             self.listening = Some(i);
                         }
                         if name_it(ghost(ui, icon::X), format!("Unbind {label}"))
-                            .on_hover_text("Unbind")
+                            .on_hover_text(format!("Clear {label} key"))
                             .clicked()
                         {
                             *[&mut self.local.toggle_key, &mut self.local.menu_key][i] =

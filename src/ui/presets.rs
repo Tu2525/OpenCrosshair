@@ -4,7 +4,7 @@ use super::widgets::{
 use super::{App, Semi, pal};
 use crate::config::{Crosshair, MAX_NAME, Mode};
 use crate::{overlay, picture, share};
-use eframe::egui::{self, Align2, FontId, RichText, Sense, vec2};
+use eframe::egui::{self, Align2, FontId, RichText, Sense, Stroke, vec2};
 use egui_phosphor::bold as icon;
 use std::collections::BTreeMap;
 
@@ -36,13 +36,24 @@ impl App {
                 } else {
                     "Save"
                 };
-                if primary(
-                    ui,
-                    !name.is_empty(),
-                    &format!("{}  {label}", icon::FLOPPY_DISK),
-                )
-                .clicked()
-                {
+                let text = format!("{}  {label}", icon::FLOPPY_DISK);
+                let clicked = if name.is_empty() {
+                    // egui fades disabled buttons, which left this gray on gray. Drawn flat in the
+                    // secondary text colour instead, so it stays readable; clicks do nothing.
+                    let p = pal();
+                    let r = ui.add(
+                        egui::Button::new(RichText::new(&text).color(p.muted).semi())
+                            .fill(p.field)
+                            .stroke(Stroke::new(1.0, p.border)),
+                    );
+                    r.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, false, label)
+                    });
+                    false
+                } else {
+                    primary(ui, true, &text).clicked()
+                };
+                if clicked {
                     let verb = if self.local.presets.contains_key(&name) {
                         "Updated"
                     } else {
@@ -174,22 +185,34 @@ impl App {
                             } else {
                                 icon::TRASH.to_string()
                             };
-                            let colour = if armed { pal().danger } else { pal().muted };
-                            let btn = egui::Button::new(RichText::new(text).color(colour))
-                                .frame_when_inactive(false);
-                            let hover = if armed {
-                                "Click again to delete"
-                            } else {
-                                "Delete"
-                            };
+                            // Muted at rest, the danger colour on hover; armed stays danger.
+                            let btn = ui
+                                .scope(|ui| {
+                                    let p = pal();
+                                    let w = &mut ui.visuals_mut().widgets;
+                                    w.inactive.fg_stroke.color =
+                                        if armed { p.danger } else { p.muted };
+                                    w.hovered.fg_stroke.color = p.danger;
+                                    w.active.fg_stroke.color = p.danger;
+                                    ui.add(
+                                        egui::Button::new(RichText::new(text))
+                                            .frame_when_inactive(false),
+                                    )
+                                })
+                                .inner;
                             let r = name_it(
-                                ui.add(btn),
+                                btn,
                                 if armed {
                                     format!("Confirm delete {name}")
                                 } else {
                                     format!("Delete {name}")
                                 },
                             );
+                            let hover = if armed {
+                                "Click again to delete".to_string()
+                            } else {
+                                format!("Delete {name}")
+                            };
                             if r.on_hover_text(hover).clicked() {
                                 if armed {
                                     delete = Some(name.clone());
@@ -197,8 +220,13 @@ impl App {
                                     self.confirm_delete = Some(name.clone());
                                 }
                             }
-                            if icon_button(ui, icon::EXPORT, format!("Export {name}"), "Export")
-                                .clicked()
+                            if icon_button(
+                                ui,
+                                icon::EXPORT,
+                                format!("Export {name}"),
+                                &format!("Export {name}"),
+                            )
+                            .clicked()
                             {
                                 export = Some(name.clone());
                             }

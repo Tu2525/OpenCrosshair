@@ -4,7 +4,7 @@ mod presets;
 mod settings;
 mod widgets;
 
-use crate::config::{Crosshair, Settings, Theme};
+use crate::config::{Crosshair, Mode, Settings, Theme};
 use crate::overlay::{self, Status, VISIBLE};
 use crate::{apps, install};
 use eframe::egui::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
@@ -40,6 +40,7 @@ struct Palette {
     edge: Color32,    // outline of checkboxes, 3:1 against the page so you can see them
     popup: Color32,
     border: Color32,
+    tab_edge: Color32, // outline of unselected tabs; only the light theme draws one
     text: Color32,
     muted: Color32,
     accent: Color32,
@@ -61,6 +62,7 @@ const DARK: Palette = Palette {
     edge: Color32::from_rgb(112, 110, 105),
     popup: Color32::from_rgb(23, 23, 22),
     border: Color32::from_rgb(42, 42, 40),
+    tab_edge: Color32::TRANSPARENT,
     text: Color32::from_rgb(232, 230, 225),
     muted: Color32::from_rgb(146, 144, 139),
     accent: Color32::from_rgb(150, 205, 160),
@@ -90,10 +92,11 @@ const LIGHT: Palette = Palette {
     field: Color32::from_rgb(238, 237, 233),
     hover: Color32::from_rgb(227, 226, 221),
     press: Color32::from_rgb(212, 210, 204),
-    control: Color32::from_rgb(226, 224, 219),
+    control: Color32::from_rgb(176, 173, 167),
     edge: Color32::from_rgb(128, 126, 120),
     popup: Color32::from_rgb(255, 255, 255),
     border: Color32::from_rgb(224, 222, 216),
+    tab_edge: Color32::from_rgb(146, 143, 136),
     text: Color32::from_rgb(34, 36, 38),
     muted: Color32::from_rgb(104, 102, 98),
     accent: Color32::from_rgb(38, 112, 72),
@@ -155,6 +158,9 @@ const COLUMN: f32 = 640.0;
 const PREVIEW_COLUMN: f32 = 400.0;
 const GUTTER: f32 = 32.0;
 const SCROLL_GAP: f32 = 24.0;
+// The pixel canvas editor on a wide window: its grid is at most 480 pt, so a wider card only
+// leaves an empty strip between the grid and the preview.
+const CANVAS_COLUMN: f32 = 540.0;
 // Label column of the editor grids, so their sliders start at the same x.
 // Just wider than the longest label ("Ring width"), so the cards still fit the narrowest window.
 const LABEL_COL: f32 = 72.0;
@@ -602,7 +608,10 @@ impl eframe::App for App {
                 // short window that header would be the whole page, so it scrolls with the rest.
                 let sticky =
                     self.page == Page::Crosshair && !side && ui.available_height() >= 600.0;
-                let column = (full - SCROLL_GAP).min(COLUMN);
+                let mut column = (full - SCROLL_GAP).min(COLUMN);
+                if side && self.local.crosshair.mode == Mode::Pixels {
+                    column = column.min(CANVAS_COLUMN);
+                }
                 let group = column + SCROLL_GAP + if side { GUTTER + PREVIEW_COLUMN } else { 0.0 };
                 // Centre the content in whatever room the window gives it.
                 let indent = ((full - group) / 2.0).floor().max(0.0);

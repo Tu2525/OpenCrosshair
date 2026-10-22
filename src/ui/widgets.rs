@@ -126,6 +126,9 @@ pub(super) fn segment(
     let mut btn = egui::Button::new(RichText::new(&text).semi().color(ink)).min_size(size);
     if on {
         btn = btn.fill(pal().text);
+    } else if pal().tab_edge != Color32::TRANSPARENT {
+        // Light theme only: the pale tab fill is too close to the page to see on its own.
+        btn = btn.stroke(Stroke::new(1.0, pal().tab_edge));
     }
     let r = ui.add(btn);
     // Screen readers hear "Lines, selected", not the icon character in front of it.
@@ -244,6 +247,24 @@ pub(super) fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     response
 }
 
+/// A button that can be switched off. Off, it keeps its text readable on a quiet fill and ignores
+/// clicks: egui's own disabled look fades the whole button, which left the text too faint.
+pub(super) fn action(ui: &mut egui::Ui, enabled: bool, text: RichText) -> egui::Response {
+    if enabled {
+        return ui.add(egui::Button::new(text));
+    }
+    let p = pal();
+    let label = plain(text.text());
+    let r = ui.add(
+        egui::Button::new(text.color(p.muted))
+            .fill(p.side)
+            .stroke(Stroke::new(1.0, p.border))
+            .sense(Sense::hover()),
+    );
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, false, label.clone()));
+    r
+}
+
 /// Solid button in the text colour: the one primary action on a card. It softens a little on hover
 /// and a little more while pressed.
 pub(super) fn primary(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Response {
@@ -254,13 +275,30 @@ pub(super) fn primary(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Res
             w.inactive.weak_bg_fill = p.text;
             w.hovered.weak_bg_fill = p.text.lerp_to_gamma(p.bg, 0.14);
             w.active.weak_bg_fill = p.text.lerp_to_gamma(p.bg, 0.28);
-            ui.add_enabled(
-                enabled,
-                egui::Button::new(RichText::new(text).color(p.bg).semi()),
-            )
+            action(ui, enabled, RichText::new(text).color(p.bg).semi())
         })
         .inner;
-    name_it(r, plain(text))
+    if enabled {
+        name_it(r, plain(text))
+    } else {
+        r
+    }
+}
+
+/// An on/off button for a setting: solid accent when on, a plain field when off.
+pub(super) fn toggle(ui: &mut egui::Ui, on: &mut bool, text: &str) -> egui::Response {
+    let p = pal();
+    let ink = if *on { p.bg } else { p.text };
+    let mut btn = egui::Button::new(RichText::new(text).semi().color(ink));
+    if *on {
+        btn = btn.fill(p.accent);
+    }
+    let r = ui.add(btn);
+    if r.clicked() {
+        *on = !*on;
+    }
+    r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, *on, plain(text)));
+    r
 }
 
 /// A quiet button: no frame until you point at it.

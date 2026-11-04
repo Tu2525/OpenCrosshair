@@ -86,7 +86,7 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
         ui.add_space(4.0);
         hint(
             ui,
-            "Choose \"Hide it\" or a preset above to turn on the button and toggle.",
+            "Choose \"Hide it\", \"Show only while aiming\" or a preset above to turn on the button and toggle.",
         );
     }
 }
@@ -98,6 +98,7 @@ fn describe_aim(rule: &AimRule) -> String {
     match &rule.action {
         Aim::Keep => "the crosshair never changes while aiming".to_string(),
         Aim::Hide => format!("hide the crosshair while the {button} is {how}"),
+        Aim::Show => format!("show the crosshair only while the {button} is {how}"),
         Aim::Preset(name) => format!("switch to {name} while the {button} is {how}"),
     }
 }

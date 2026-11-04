@@ -296,7 +296,7 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             st.aiming = false;
         }
         (st.aim_vk, st.aim_toggle) = (rule.button.vk(), rule.toggle);
-       if st.aiming {
+        if st.aiming {
             match &rule.action {
                 Aim::Hide => show = false,
                 Aim::Preset(name) => {

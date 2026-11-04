@@ -47,7 +47,6 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
                 ui.selectable_value(&mut rule.action, Aim::Hide, "Hide it");
                 ui.selectable_value(&mut rule.action, Aim::Show, "Show only while aiming");
                 for name in presets {
-                    // unchanged
                     let choice = format!("Switch to {name}");
                     ui.selectable_value(&mut rule.action, Aim::Preset(name.clone()), choice);
                 }

@@ -377,6 +377,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn show_only_while_aiming_is_an_active_rule() {
+        let s = Settings {
+            aim: Aim::Show,
+            ..Default::default()
+        };
+        assert!(s.aim_rule_for(None).action == Aim::Show);
+    }
+
+    #[test]
     fn a_game_can_override_the_default_aiming_rule() {
         let s = Settings {
             aim: Aim::Hide,

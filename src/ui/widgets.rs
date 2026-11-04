@@ -278,11 +278,7 @@ pub(super) fn primary(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Res
             action(ui, enabled, RichText::new(text).color(p.bg).semi())
         })
         .inner;
-    if enabled {
-        name_it(r, plain(text))
-    } else {
-        r
-    }
+    if enabled { name_it(r, plain(text)) } else { r }
 }
 
 /// An on/off button for a setting: solid accent when on, a plain field when off.

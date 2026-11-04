@@ -28,8 +28,8 @@ before using any overlay in competitive play.
   then set its size and opacity. It's copied into the app's folder, so moving the original doesn't break it.
 - **Presets**, and a different preset for each game. Click a preset's name to rename it. Export them to
   a `.opencrosshair` file (pictures included) to share or back up, and import files from others.
-- **While aiming**: hide the crosshair or switch to another preset while you hold (or toggle) a mouse
-  button, for games with aim down sights. Set a default, then give any game its own rule, or tell it
+- **While aiming**: hide the crosshair, show it only while aiming, or switch to another preset while you hold (or toggle) a mouse
+  button, for games with aim down sights or third person aiming without a crosshair. Set a default, then give any game its own rule, or tell it
   to ignore aiming altogether (so right-click can do nothing in one game and something in another).
 - **Games only mode**: the crosshair shows while one of your games is focused and hides everywhere else.
   Games are listed by their real name and icon, read from the game's own exe.

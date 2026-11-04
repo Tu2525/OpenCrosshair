@@ -31,6 +31,8 @@ pub enum Aim {
     #[default]
     Keep,
     Hide,
+    /// Hidden until you aim, then shown.
+    Show,
     Preset(String),
 }
 

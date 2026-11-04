@@ -34,6 +34,7 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
     let shown = match &rule.action {
         Aim::Keep => "Keep the crosshair".to_string(),
         Aim::Hide => "Hide it".to_string(),
+        Aim::Show => "Show only while aiming".to_string(),
         Aim::Preset(name) => format!("Switch to {name}"),
     };
     egui::Grid::new(("aim_rule", id))
@@ -44,7 +45,9 @@ fn aim_controls(ui: &mut egui::Ui, id: &str, presets: &[String], rule: &mut AimR
             dropdown(ui, (id, "action"), 220.0, &shown, |ui| {
                 ui.selectable_value(&mut rule.action, Aim::Keep, "Keep the crosshair");
                 ui.selectable_value(&mut rule.action, Aim::Hide, "Hide it");
+                ui.selectable_value(&mut rule.action, Aim::Show, "Show only while aiming");
                 for name in presets {
+                    // unchanged
                     let choice = format!("Switch to {name}");
                     ui.selectable_value(&mut rule.action, Aim::Preset(name.clone()), choice);
                 }

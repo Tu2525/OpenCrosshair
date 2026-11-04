@@ -304,8 +304,11 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
                         c = p.clone();
                     }
                 }
-                Aim::Keep => {}
+                Aim::Show | Aim::Keep => {}
             }
+        } else if rule.action == Aim::Show && aim_on {
+            // Not aiming: stay hidden. aim_on was worked out above, so polling keeps running.
+            show = false;
         }
         let windowed = game.is_some_and(|g| g.windowed);
         (

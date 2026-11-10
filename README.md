@@ -163,7 +163,7 @@ Pictures are decoded by the Windows Imaging Component that ships with Windows, s
 library in the exe either.
 
 The settings window uses [egui](https://github.com/emilk/egui). With it open the app uses about 40 MB
-of its own memory, mostly the window's OpenGL context and fonts. Task Manager may show more, because
+of its own memory, mostly the window's GPU (wgpu) surface and fonts. Task Manager may show more, because
 its figure includes memory shared with the graphics driver. When it's hidden those pages sit untouched,
 so the app hands them back to Windows and drops to a few MB or less until you open the window again.
 

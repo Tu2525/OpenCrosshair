@@ -61,7 +61,7 @@ pub fn load(path: &Path, size: u32) -> Option<Image> {
         let (ox, oy) = ((side - tw as usize) / 2, (side - th as usize) / 2);
         let mut px = vec![0u32; side * side];
         for (y, row) in bytes.chunks_exact(tw as usize * 4).enumerate() {
-            for (x, p) in row.chunks_exact(4).enumerate() {
+            for (x, p) in row.as_chunks::<4>().0.iter().enumerate() {
                 px[(y + oy) * side + x + ox] = u32::from_le_bytes([p[0], p[1], p[2], p[3]]);
             }
         }

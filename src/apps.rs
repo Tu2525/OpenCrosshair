@@ -277,8 +277,13 @@ fn description(path: &str) -> Option<String> {
             (found.as_bool() && len > 0).then_some((ptr as *const c_void, len))
         };
         // Strings are stored per language; use the first language the file lists.
-        let (langs, _) = query(r"\VarFileInfo\Translation")?;
-        let [lang, codepage] = *(langs as *const [u16; 2]);
+        let (langs, langs_len) = query(r"\VarFileInfo\Translation")?;
+        // Each entry is a 4-byte (lang, codepage) pair; the data is not guaranteed to be
+        // aligned or to be long enough for one, so check the length and read unaligned.
+        if langs_len < 4 {
+            return None;
+        }
+        let [lang, codepage] = std::ptr::read_unaligned(langs as *const [u16; 2]);
         let (text, len) = query(&format!(
             r"\StringFileInfo\{lang:04x}{codepage:04x}\FileDescription"
         ))?;

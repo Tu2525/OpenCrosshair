@@ -174,6 +174,8 @@ impl Crosshair {
         ] {
             *v = (*v).min(50);
         }
+        self.offset_x = self.offset_x.clamp(-3000, 3000);
+        self.offset_y = self.offset_y.clamp(-3000, 3000);
         self.image_size = self.image_size.clamp(4, MAX_IMAGE);
         self.image_opacity = self.image_opacity.clamp(5, 100);
         // Only ever a file name inside our images folder, never a path somewhere else.
@@ -375,6 +377,17 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_out_of_range_offset_is_clamped() {
+        let mut c = Crosshair {
+            offset_x: 99_999,
+            offset_y: -99_999,
+            ..Default::default()
+        };
+        c.sanitize();
+        assert_eq!((c.offset_x, c.offset_y), (3000, -3000));
+    }
 
     #[test]
     fn show_only_while_aiming_is_an_active_rule() {

@@ -14,12 +14,17 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use windows::Win32::Foundation::HWND;
 use windows::Win32::Networking::WinHttp::*;
+use windows::Win32::Security::Cryptography::{BCRYPT_SHA256_ALG_HANDLE, BCryptHash};
+use windows::Win32::Security::WinTrust::*;
 use windows::core::{HSTRING, PCWSTR, w};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REPO: &str = "Tu2525/OpenCrosshair";
 const ASSET: &str = "OpenCrosshair.exe";
+/// The exe is ~11 MB; refuse to buffer anything much bigger.
+const MAX_BODY: usize = 64 * 1024 * 1024;
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 const RETRY_AFTER: Duration = Duration::from_secs(10 * 60); // e.g. no network yet at boot
 
@@ -167,7 +172,7 @@ fn check_and_install() -> Result<Option<(PathBuf, String)>, String> {
         return Err("the release has no OpenCrosshair.exe".into());
     }
     // A cut-off download would leave an exe that doesn't start, so check it's all there.
-    // The real exe is ~7 MB, so anything tiny is an error page, not a build.
+    // The real exe is ~11 MB, so anything tiny is an error page, not a build.
     let complete = res.status == 200
         && res.body.starts_with(b"MZ")
         && res.body.len() >= 1024 * 1024
@@ -177,14 +182,75 @@ fn check_and_install() -> Result<Option<(PathBuf, String)>, String> {
     if !complete {
         return Err("the download was incomplete".into());
     }
+    // Catches a corrupted or swapped download. It can't catch a compromised release, since
+    // whoever replaces the exe can replace the hash too; only code signing does that.
+    let sums = request(
+        &format!("https://github.com/{REPO}/releases/download/{tag}/{ASSET}.sha256"),
+        true,
+    )?;
+    if sums.status != 200 || !hash_matches(&res.body, &sums.body) {
+        return Err("the download didn't match its SHA-256".into());
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    swap(&exe, &res.body).map_err(|e| format!("couldn't replace {}: {e}", exe.display()))?;
+    // Once releases are signed, an install that is signed only accepts signed updates, so a
+    // swapped-in unsigned exe can't downgrade it. Unsigned installs update as before.
+    swap(&exe, &res.body, is_signed(&exe))
+        .map_err(|e| format!("couldn't replace {}: {e}", exe.display()))?;
     Ok(Some((exe, tag)))
 }
 
-fn swap(exe: &Path, new_bytes: &[u8]) -> std::io::Result<()> {
+/// SHA-256 through Windows' own BCrypt, so no hashing crate is needed.
+fn sha256(data: &[u8]) -> Option<[u8; 32]> {
+    let mut out = [0u8; 32];
+    let ok = unsafe { BCryptHash(BCRYPT_SHA256_ALG_HANDLE, None, data, &mut out) }.is_ok();
+    ok.then_some(out)
+}
+
+/// `sums` is a `sha256sum`-style file: the hex digest first, then the file name.
+fn hash_matches(data: &[u8], sums: &[u8]) -> bool {
+    let want = String::from_utf8_lossy(sums);
+    let want = want.split_whitespace().next().unwrap_or("");
+    sha256(data).is_some_and(|h| {
+        let got: String = h.iter().map(|b| format!("{b:02x}")).collect();
+        got.eq_ignore_ascii_case(want)
+    })
+}
+
+/// True if Windows accepts the file's Authenticode signature (valid, trusted chain).
+fn is_signed(path: &Path) -> bool {
+    let wide = HSTRING::from(path.as_os_str());
+    let mut file = WINTRUST_FILE_INFO {
+        cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
+        pcwszFilePath: PCWSTR(wide.as_ptr()),
+        ..Default::default()
+    };
+    let mut data = WINTRUST_DATA {
+        cbStruct: std::mem::size_of::<WINTRUST_DATA>() as u32,
+        dwUIChoice: WTD_UI_NONE,
+        fdwRevocationChecks: WTD_REVOKE_NONE, // stays usable offline
+        dwUnionChoice: WTD_CHOICE_FILE,
+        Anonymous: WINTRUST_DATA_0 { pFile: &mut file },
+        ..Default::default()
+    };
+    let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    // 0 means trusted. No state is kept (dwStateAction is the default), so nothing to close.
+    unsafe {
+        WinVerifyTrust(
+            HWND::default(),
+            &mut action,
+            &mut data as *mut _ as *mut c_void,
+        ) == 0
+    }
+}
+
+/// With `require_signed`, the new exe must carry a valid signature or the swap is refused.
+fn swap(exe: &Path, new_bytes: &[u8], require_signed: bool) -> std::io::Result<()> {
     let (new, old) = (exe.with_extension("exe.new"), exe.with_extension("exe.old"));
     std::fs::write(&new, new_bytes)?;
+    if require_signed && !is_signed(&new) {
+        let _ = std::fs::remove_file(&new);
+        return Err(std::io::Error::other("the new exe isn't validly signed"));
+    }
     let _ = std::fs::remove_file(&old);
     std::fs::rename(exe, &old)?; // allowed while running
     if let Err(e) = std::fs::rename(&new, exe) {
@@ -337,6 +403,9 @@ fn request(url: &str, follow_redirects: bool) -> Result<Response, String> {
             if n == 0 {
                 break;
             }
+            if body.len() + n as usize > MAX_BODY {
+                return Err("the download was larger than expected".into());
+            }
             body.extend_from_slice(&buf[..n as usize]);
         }
         Ok(Response {
@@ -357,6 +426,32 @@ mod tests {
         assert!(parse("v0.10.0") > parse("0.9.9"));
         assert!(parse("v0.2.0-beta") > parse("0.1.9"));
         assert_eq!(parse("garbage"), (0, 0, 0));
+    }
+
+    #[test]
+    fn swap_replaces_and_refuses_unsigned() {
+        use super::swap;
+        let dir = std::env::temp_dir().join(format!("oc-swap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("a.exe");
+        std::fs::write(&exe, b"old").unwrap();
+        // An unsigned file fails the signature requirement and leaves the exe alone.
+        assert!(swap(&exe, b"new", true).is_err());
+        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        swap(&exe, b"new", false).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"new");
+        assert_eq!(std::fs::read(dir.join("a.exe.old")).unwrap(), b"old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sha256_check() {
+        use super::hash_matches;
+        // SHA-256("abc"), in sha256sum format.
+        let sums = b"BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD  OpenCrosshair.exe\n";
+        assert!(hash_matches(b"abc", sums));
+        assert!(!hash_matches(b"abd", sums));
+        assert!(!hash_matches(b"abc", b"<html>not found</html>"));
     }
 
     #[test]

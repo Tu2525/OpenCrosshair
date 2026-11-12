@@ -66,5 +66,7 @@ jobs:
         run: |
           cp target/release/OpenCrosshair.exe OpenCrosshair.exe
           cp target/release/OpenCrosshair.exe OpenCrosshair-Setup.exe
-          gh release create "$GITHUB_REF_NAME" OpenCrosshair-Setup.exe OpenCrosshair.exe \
+          # The updater downloads this next to the exe and refuses an exe that doesn't match.
+          sha256sum OpenCrosshair.exe > OpenCrosshair.exe.sha256
+          gh release create "$GITHUB_REF_NAME" OpenCrosshair-Setup.exe OpenCrosshair.exe OpenCrosshair.exe.sha256 \
             --title "OpenCrosshair $GITHUB_REF_NAME" --generate-notes

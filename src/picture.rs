@@ -179,7 +179,8 @@ mod tests {
             }
             bmp.extend(vec![0u8; (row - w * 3) as usize]);
         }
-        let path = std::env::temp_dir().join("opencrosshair-test.bmp");
+        let path =
+            std::env::temp_dir().join(format!("opencrosshair-test-{}.bmp", std::process::id()));
         std::fs::write(&path, bmp).unwrap();
 
         // Scaled to 8 wide it's 8x4, centred in an 8x8 square: rows 2..6 red, the rest clear.

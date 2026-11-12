@@ -108,8 +108,16 @@ impl App {
         card(ui, "Position", |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Offset").color(pal().muted));
-                ui.add(egui::DragValue::new(&mut c.offset_x).prefix("x  "));
-                ui.add(egui::DragValue::new(&mut c.offset_y).prefix("y  "));
+                ui.add(
+                    egui::DragValue::new(&mut c.offset_x)
+                        .range(-3000..=3000)
+                        .prefix("x  "),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut c.offset_y)
+                        .range(-3000..=3000)
+                        .prefix("y  "),
+                );
                 if ghost(ui, &format!("{}  Reset", icon::ARROW_COUNTER_CLOCKWISE)).clicked() {
                     (c.offset_x, c.offset_y) = (0, 0);
                 }

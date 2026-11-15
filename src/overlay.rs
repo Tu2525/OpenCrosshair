@@ -133,16 +133,19 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
         }
         // Some games grab topmost when they gain focus; re-assert it once a second.
         SetTimer(Some(hwnd), 1, 1000, None);
-        // Out-of-context WinEvent hook: Windows tells us when focus changes. No DLL, no polling.
-        SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_FOREGROUND,
-            None,
-            Some(on_focus),
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT,
-        );
+        // Out-of-context WinEvent hooks: Windows tells us when focus changes or a window finishes
+        // moving or resizing. No DLL, no polling.
+        for event in [EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MOVESIZEEND] {
+            SetWinEventHook(
+                event,
+                event,
+                None,
+                Some(on_focus),
+                0,
+                0,
+                WINEVENT_OUTOFCONTEXT,
+            );
+        }
         let (show_msg, quit_msg) = (
             RegisterWindowMessageW(MSG_SHOW),
             RegisterWindowMessageW(MSG_QUIT),
@@ -176,8 +179,12 @@ pub fn run(settings: Arc<Mutex<Settings>>) {
                     }
                 }
                 WM_TIMER => {
-                    // Games can switch to fullscreen after they've taken focus.
-                    if IN_GAME.load(Ordering::Relaxed) && d3d_fullscreen() != st.fullscreen {
+                    // Games can switch to fullscreen, resize, or change resolution after taking focus.
+                    let fg = GetForegroundWindow();
+                    if fg != st.last_fg
+                        || (IN_GAME.load(Ordering::Relaxed) && d3d_fullscreen() != st.fullscreen)
+                        || target(st.game_hwnd, st.in_game, st.windowed) != st.centre
+                    {
                         apply(hwnd, &settings, &mut st);
                     }
                     let _ = SetWindowPos(
@@ -232,7 +239,12 @@ struct State {
     drawn: Option<Crosshair>, // skip re-rendering when nothing changed
     size: (i32, i32),
     at: POINT,
-    last_exe: String, // which app was in front last time apply() ran
+    centre: POINT,
+    last_fg: HWND,
+    game_hwnd: HWND,
+    last_exe: String, // the last app in front that wasn't our settings window
+    in_game: bool,
+    windowed: bool,
     aiming: bool,
     aim_down: bool, // button state last time, for toggle mode
     aim_vk: i32,
@@ -257,13 +269,35 @@ fn d3d_fullscreen() -> bool {
 
 unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
     let fg = unsafe { GetForegroundWindow() };
+    st.last_fg = fg;
     let exe = apps::of_window(fg).exe;
     // The settings window previews the crosshair, but only while you can actually see it.
     let ours = exe == st.own_exe && settings_visible();
+    if !ours {
+        st.game_hwnd = fg;
+        // Switching apps ends an aim that was in progress (a toggled one would carry over).
+        if st.last_exe != exe {
+            st.last_exe = exe;
+            st.aiming = false;
+            st.aim_down = false;
+        }
+    } else {
+        let live = !st.game_hwnd.0.is_null()
+            && unsafe {
+                IsWindow(Some(st.game_hwnd)).as_bool() && !IsIconic(st.game_hwnd).as_bool()
+            };
+        if !live {
+            st.game_hwnd = HWND::default();
+            st.last_exe.clear();
+        }
+    }
     let visible = VISIBLE.load(Ordering::Relaxed);
-    let (c, keys, show, in_game, windowed, aim_on) = {
+    let (c, keys, show, in_game, aim_on) = {
         let s = settings.lock().unwrap();
-        let game = s.games.iter().find(|g| g.exe == exe).filter(|_| !ours);
+        let target_game = s.games.iter().find(|g| g.exe == st.last_exe);
+        let game = target_game.filter(|_| !ours);
+        st.in_game = target_game.is_some();
+        st.windowed = target_game.is_some_and(|g| g.windowed);
         // While our own window is focused, preview the crosshair being edited.
         let mut c = game
             .and_then(|g| s.presets.get(&g.preset))
@@ -284,16 +318,11 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
         }
         // The game's own aiming rule if it has one, otherwise the default.
         let rule = s.aim_rule_for(game);
-        // Switching apps ends an aim that was in progress (a toggled one would carry over).
-        if st.last_exe != exe {
-            st.last_exe = exe.clone();
-            st.aiming = false;
-            st.aim_down = false;
-        }
         // Aiming only counts while the crosshair is up somewhere it should react to it.
         let aim_on = rule.action != Aim::Keep && show && !ours;
         if !aim_on {
             st.aiming = false;
+            st.aim_down = false;
         }
         (st.aim_vk, st.aim_toggle) = (rule.button.vk(), rule.toggle);
         if st.aiming {
@@ -310,15 +339,7 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             // Not aiming: stay hidden. aim_on was worked out above, so polling keeps running.
             show = false;
         }
-        let windowed = game.is_some_and(|g| g.windowed);
-        (
-            c,
-            [s.toggle_key, s.menu_key],
-            show,
-            game.is_some(),
-            windowed,
-            aim_on,
-        )
+        (c, [s.toggle_key, s.menu_key], show, game.is_some(), aim_on)
     };
     IN_GAME.store(in_game, Ordering::Relaxed);
     if aim_on != st.polling {
@@ -354,7 +375,8 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
     }
 
     unsafe {
-        let centre = target(fg, in_game, windowed);
+        let centre = target(st.game_hwnd, st.in_game, st.windowed);
+        st.centre = centre;
         if st.drawn.as_ref() != Some(&c) {
             let img = render::render(&c);
             st.size = (img.w as i32, img.h as i32);
@@ -390,8 +412,9 @@ fn top_left(centre: POINT, (w, h): (i32, i32), c: &Crosshair) -> POINT {
 /// made it drift: a maximized window stops at the taskbar, so its middle is above the screen's.)
 unsafe fn target(fg: HWND, in_game: bool, windowed: bool) -> POINT {
     unsafe {
+        let live = !fg.0.is_null() && IsWindow(Some(fg)).as_bool() && !IsIconic(fg).as_bool();
         let mut r = RECT::default();
-        if windowed && GetClientRect(fg, &mut r).is_ok() && r.right > 0 && r.bottom > 0 {
+        if live && windowed && GetClientRect(fg, &mut r).is_ok() && r.right > 0 && r.bottom > 0 {
             let mut p = POINT {
                 x: r.right / 2,
                 y: r.bottom / 2,
@@ -404,7 +427,7 @@ unsafe fn target(fg: HWND, in_game: bool, windowed: bool) -> POINT {
             cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
-        let monitor = if in_game {
+        let monitor = if live && in_game {
             MonitorFromWindow(fg, MONITOR_DEFAULTTOPRIMARY)
         } else {
             // (0, 0) is always on the main monitor.
@@ -694,6 +717,9 @@ unsafe fn tray_menu(h: HWND) {
 }
 
 unsafe extern "system" fn wndproc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if m == WM_DISPLAYCHANGE {
+        refresh();
+    }
     unsafe { DefWindowProcW(h, m, w, l) }
 }
 

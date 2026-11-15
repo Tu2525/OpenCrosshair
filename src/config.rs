@@ -139,7 +139,7 @@ impl Crosshair {
         let n = n.clamp(1, MAX_GRID);
         let old = self.grid as i32;
         let mut px = vec![[0; 4]; (n * n) as usize];
-        let d = (n as i32 - old) / 2;
+        let d = n as i32 / 2 - old / 2;
         for y in 0..old {
             for x in 0..old {
                 let (nx, ny) = (x + d, y + d);
@@ -481,5 +481,28 @@ mod tests {
         assert!(s.aim == Aim::Keep);
         assert!(s.games[0].preset.is_empty());
         assert!(s.games[0].aim.as_ref().unwrap().action == Aim::Keep);
+    }
+
+    #[test]
+    fn resizing_the_grid_step_by_step_keeps_the_drawing_centred() {
+        let mut step = Crosshair {
+            mode: Mode::Pixels,
+            grid: 30,
+            ..Default::default()
+        };
+        step.pixels[15 * 30 + 15] = [0, 255, 0, 255];
+        let mut jump = step.clone();
+
+        for n in 31..=40 {
+            step.resize_grid(n);
+        }
+        jump.resize_grid(40);
+        assert_eq!(step.pixels, jump.pixels);
+        assert_eq!(step.pixels[20 * 40 + 20], [0, 255, 0, 255]);
+
+        for n in (30..40).rev() {
+            step.resize_grid(n);
+        }
+        assert_eq!(step.pixels[15 * 30 + 15], [0, 255, 0, 255]);
     }
 }

@@ -251,6 +251,7 @@ struct State {
     aim_toggle: bool,
     polling: bool,
     fullscreen: bool,
+    alpha: u8,
 }
 
 /// Hold mode: aiming while the button is down. Toggle mode: each press flips it.
@@ -292,7 +293,7 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
         }
     }
     let visible = VISIBLE.load(Ordering::Relaxed);
-    let (c, keys, show, in_game, aim_on) = {
+    let (c, keys, show, in_game, aim_on, faded) = {
         let s = settings.lock().unwrap();
         let target_game = s.games.iter().find(|g| g.exe == st.last_exe);
         let game = target_game.filter(|_| !ours);
@@ -325,9 +326,13 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             st.aim_down = false;
         }
         (st.aim_vk, st.aim_toggle) = (rule.button.vk(), rule.toggle);
+        let mut faded = false;
         if st.aiming {
             match &rule.action {
-                Aim::Hide => show = false,
+                Aim::Hide => {
+                    show = false;
+                    faded = true;
+                }
                 Aim::Preset(name) => {
                     if let Some(p) = s.presets.get(name) {
                         c = p.clone();
@@ -338,8 +343,16 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
         } else if rule.action == Aim::Show && aim_on {
             // Not aiming: stay hidden. aim_on was worked out above, so polling keeps running.
             show = false;
+            faded = true;
         }
-        (c, [s.toggle_key, s.menu_key], show, game.is_some(), aim_on)
+        (
+            c,
+            [s.toggle_key, s.menu_key],
+            show,
+            game.is_some(),
+            aim_on,
+            faded,
+        )
     };
     IN_GAME.store(in_game, Ordering::Relaxed);
     if aim_on != st.polling {
@@ -375,13 +388,16 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
     }
 
     unsafe {
+        // 1 out of 255 is invisible to the eye, but Windows still counts the window as there.
+        let alpha: u8 = if faded { 1 } else { 255 };
         let centre = target(st.game_hwnd, st.in_game, st.windowed);
         st.centre = centre;
         if st.drawn.as_ref() != Some(&c) {
             let img = render::render(&c);
             st.size = (img.w as i32, img.h as i32);
             st.at = top_left(centre, st.size, &c);
-            draw(hwnd, &img, st.at);
+            draw(hwnd, &img, st.at, alpha);
+            st.alpha = alpha;
             st.drawn = Some(c);
         } else if top_left(centre, st.size, &c) != st.at {
             // Same image, different spot (a game on another monitor): just move the window.
@@ -389,8 +405,16 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
             let flags = SWP_NOSIZE | SWP_NOACTIVATE;
             let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), st.at.x, st.at.y, 0, 0, flags);
         }
-        let _ = ShowWindow(hwnd, if show { SW_SHOWNOACTIVATE } else { SW_HIDE });
-        if show {
+        // Only truly hide the window when the crosshair is off. While an aim rule has hidden it,
+        // keep the window up but invisible.
+        let up = show || faded;
+        let _ = ShowWindow(hwnd, if up { SW_SHOWNOACTIVATE } else { SW_HIDE });
+        // Only touch the opacity when it actually changed.
+        if st.alpha != alpha {
+            set_alpha(hwnd, alpha);
+            st.alpha = alpha;
+        }
+        if up {
             // A game that just took focus may have put itself on top; get back above it now
             // rather than on the next tick of the topmost timer.
             let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
@@ -447,7 +471,7 @@ unsafe fn target(fg: HWND, in_game: bool, windowed: bool) -> POINT {
     }
 }
 
-unsafe fn draw(hwnd: HWND, img: &Image, pos: POINT) {
+unsafe fn draw(hwnd: HWND, img: &Image, pos: POINT, alpha: u8) {
     unsafe {
         let screen = GetDC(None);
         let mem = CreateCompatibleDC(Some(screen));
@@ -474,7 +498,7 @@ unsafe fn draw(hwnd: HWND, img: &Image, pos: POINT) {
             let blend = BLENDFUNCTION {
                 BlendOp: AC_SRC_OVER as u8,
                 BlendFlags: 0,
-                SourceConstantAlpha: 255,
+                SourceConstantAlpha: alpha,
                 AlphaFormat: AC_SRC_ALPHA as u8,
             };
             let _ = UpdateLayeredWindow(
@@ -493,6 +517,29 @@ unsafe fn draw(hwnd: HWND, img: &Image, pos: POINT) {
         }
         let _ = DeleteDC(mem);
         ReleaseDC(None, screen);
+    }
+}
+
+/// Change only how see-through the overlay is, without redrawing its picture.
+unsafe fn set_alpha(hwnd: HWND, alpha: u8) {
+    let blend = BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
+        BlendFlags: 0,
+        SourceConstantAlpha: alpha,
+        AlphaFormat: AC_SRC_ALPHA as u8,
+    };
+    unsafe {
+        let _ = UpdateLayeredWindow(
+            hwnd,
+            None,
+            None,
+            None,
+            None,
+            None,
+            COLORREF(0),
+            Some(&blend),
+            ULW_ALPHA,
+        );
     }
 }
 

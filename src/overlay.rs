@@ -343,7 +343,6 @@ unsafe fn apply(hwnd: HWND, settings: &Mutex<Settings>, st: &mut State) {
         } else if rule.action == Aim::Show && aim_on {
             // Not aiming: stay hidden. aim_on was worked out above, so polling keeps running.
             show = false;
-            faded = true;
         }
         (
             c,

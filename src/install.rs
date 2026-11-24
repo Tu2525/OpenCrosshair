@@ -250,6 +250,11 @@ fn register_uninstall(exe: &Path) {
     );
     set_string(
         k,
+        w!("QuietUninstallString"),
+        &format!("\"{exe_str}\" --uninstall --silent"),
+    );
+    set_string(
+        k,
         w!("InstallLocation"),
         &exe.parent().unwrap_or(exe).display().to_string(),
     );
@@ -285,6 +290,8 @@ pub fn uninstall(silent: bool) {
     // Only ever our own install folder, never wherever a portable copy happens to live.
     if running_installed()
         && let Some(dir) = install_dir()
+        // cmd would expand %VAR% and stop at quotes inside this path, so never hand it one.
+        && !dir.to_string_lossy().contains(['%', '"'])
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let _ = Command::new("cmd")

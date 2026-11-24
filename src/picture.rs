@@ -61,7 +61,7 @@ pub fn load(path: &Path, size: u32) -> Option<Image> {
         let (ox, oy) = ((side - tw as usize) / 2, (side - th as usize) / 2);
         let mut px = vec![0u32; side * side];
         for (y, row) in bytes.chunks_exact(tw as usize * 4).enumerate() {
-            for (x, p) in row.chunks_exact(4).enumerate() {
+            for (x, p) in row.as_chunks::<4>().0.iter().enumerate() {
                 px[(y + oy) * side + x + ox] = u32::from_le_bytes([p[0], p[1], p[2], p[3]]);
             }
         }
@@ -179,7 +179,8 @@ mod tests {
             }
             bmp.extend(vec![0u8; (row - w * 3) as usize]);
         }
-        let path = std::env::temp_dir().join("opencrosshair-test.bmp");
+        let path =
+            std::env::temp_dir().join(format!("opencrosshair-test-{}.bmp", std::process::id()));
         std::fs::write(&path, bmp).unwrap();
 
         // Scaled to 8 wide it's 8x4, centred in an 8x8 square: rows 2..6 red, the rest clear.

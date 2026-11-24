@@ -82,7 +82,7 @@ going by each project's own store page or README in October 2026. A dash means t
 
 **Where OpenCrosshair is different**
 
-- **It's light.** One  exe with no browser engine inside. Simple Sight's install folder, for
+- **It's light.** One exe with no browser engine inside. Simple Sight's install folder, for
   comparison, is 525 MB; it and CrossOver are built on Electron, which bundles a copy of Chromium.
   OpenCrosshair idles at a few MB of RAM in the tray and uses no measurable CPU while you play.
 - **It's yours to change.** MIT licensed, so you can fork it, ship it, or build it into something else.
@@ -163,7 +163,7 @@ Pictures are decoded by the Windows Imaging Component that ships with Windows, s
 library in the exe either.
 
 The settings window uses [egui](https://github.com/emilk/egui). With it open the app uses about 40 MB
-of its own memory, mostly the window's OpenGL context and fonts. Task Manager may show more, because
+of its own memory, mostly the window's GPU (wgpu) surface and fonts. Task Manager may show more, because
 its figure includes memory shared with the graphics driver. When it's hidden those pages sit untouched,
 so the app hands them back to Windows and drops to a few MB or less until you open the window again.
 
@@ -210,8 +210,8 @@ The exe ends up in `target/release/OpenCrosshair.exe`. Copy it to a name contain
 Bump `version` in `Cargo.toml`, commit, then tag and push:
 
 ```
-git tag v0.5.9
-git push origin v0.5.9
+git tag v0.5.10
+git push origin v0.5.10
 ```
 
 GitHub Actions builds the release and attaches both exes. Installed copies check every six hours and update themselves.
